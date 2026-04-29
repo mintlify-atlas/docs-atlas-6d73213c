@@ -1,0 +1,348 @@
+---
+title: "HAL DMA driver — direct memory access transfers"
+description: "HAL DMA for STM32H7: DMA1, DMA2, and BDMA streams, DMA_InitTypeDef fields, polling and interrupt modes, D-cache coherency, and peripheral-to-memory examples."
+---
+
+The HAL DMA driver manages data transfers between memory and peripherals (or between two memory regions) without CPU involvement, freeing the processor for other tasks during the transfer. STM32H7 devices include three DMA controllers — DMA1, DMA2 (each with eight streams accessible from D1/D2 domains), and BDMA (Basic DMA, eight channels in the D3 always-on domain) — all routed through a DMAMUX that maps any request source to any stream or channel.
+
+## DMA controller hierarchy
+
+<AccordionGroup>
+  <Accordion title="DMA1 and DMA2 — main domain DMA">
+    Both DMA1 and DMA2 have eight independently configurable streams. They can access AXI SRAM, D2 SRAM1/2, Flash, and most peripherals on the AXI/AHB bus matrix. Each stream supports FIFO buffering and single or burst transfers.
+
+    **Key difference:** DMA1 and DMA2 **cannot** directly access the D3 SRAM (address range 0x38000000). Use BDMA for D3 peripherals and memory.
+  </Accordion>
+
+  <Accordion title="BDMA — D3 basic DMA">
+    BDMA has eight channels and sits in the D3 always-on power domain, so it remains active in Stop mode. It is typically used with low-power peripherals such as LPUART1, SPI6, I2C4, and LPTIM. BDMA cannot access D1 or D2 SRAM — it is limited to D3 SRAM and D3 peripherals.
+  </Accordion>
+
+  <Accordion title="DMAMUX — request routing">
+    All DMA streams and BDMA channels are connected to a DMAMUX that decouples peripheral request signals from hardware stream assignments. You select the request source in `DMA_InitTypeDef.Request` using the `DMA_REQUEST_*` or `BDMA_REQUEST_*` constants. DMAMUX1 serves DMA1/DMA2; DMAMUX2 serves BDMA.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  For transfers that span multiple memory domains (e.g., D1 AXI SRAM to D3 SRAM, or SRAM to external SDRAM), use the MDMA controller instead. See the [MDMA reference](/api/mdma).
+</Note>
+
+## DMA_InitTypeDef
+
+Populate this structure and pass it (inside a `DMA_HandleTypeDef`) to `HAL_DMA_Init`.
+
+<ParamField path="Request" type="uint32_t" required>
+  DMAMUX request source. For DMA1/DMA2 streams use `DMA_REQUEST_*` constants (e.g., `DMA_REQUEST_USART1_RX`). For BDMA channels use `BDMA_REQUEST_*` constants (e.g., `BDMA_REQUEST_SPI6_RX`). Use `DMA_REQUEST_MEM2MEM` for software-triggered memory-to-memory transfers (DMA2 only).
+</ParamField>
+
+<ParamField path="Direction" type="uint32_t" required>
+  Transfer direction.
+
+  | Value | Description |
+  |---|---|
+  | `DMA_PERIPH_TO_MEMORY` | Peripheral → memory (RX) |
+  | `DMA_MEMORY_TO_PERIPH` | Memory → peripheral (TX) |
+  | `DMA_MEMORY_TO_MEMORY` | Memory → memory (DMA2 only) |
+</ParamField>
+
+<ParamField path="PeriphInc" type="uint32_t" required>
+  `DMA_PINC_ENABLE` to auto-increment the peripheral address after each transfer beat, or `DMA_PINC_DISABLE` to keep the peripheral address fixed (typical for register-mapped peripherals).
+</ParamField>
+
+<ParamField path="MemInc" type="uint32_t" required>
+  `DMA_MINC_ENABLE` to auto-increment the memory address, or `DMA_MINC_DISABLE` to write/read the same memory address repeatedly (e.g., circular buffer fill with a constant).
+</ParamField>
+
+<ParamField path="PeriphDataAlignment" type="uint32_t" required>
+  Peripheral data width: `DMA_PDATAALIGN_BYTE`, `DMA_PDATAALIGN_HALFWORD`, or `DMA_PDATAALIGN_WORD`. Must match the peripheral's data register width.
+</ParamField>
+
+<ParamField path="MemDataAlignment" type="uint32_t" required>
+  Memory data width: `DMA_MDATAALIGN_BYTE`, `DMA_MDATAALIGN_HALFWORD`, or `DMA_MDATAALIGN_WORD`.
+</ParamField>
+
+<ParamField path="Mode" type="uint32_t" required>
+  Transfer mode.
+
+  | Value | Description |
+  |---|---|
+  | `DMA_NORMAL` | Single transfer; stream halts at completion |
+  | `DMA_CIRCULAR` | Automatically reloads counters at end of transfer |
+  | `DMA_PFCTRL` | Peripheral flow control; peripheral signals end of transfer |
+</ParamField>
+
+<ParamField path="Priority" type="uint32_t" required>
+  Stream arbitration priority when two streams request the bus simultaneously: `DMA_PRIORITY_LOW`, `DMA_PRIORITY_MEDIUM`, `DMA_PRIORITY_HIGH`, or `DMA_PRIORITY_VERY_HIGH`.
+</ParamField>
+
+<ParamField path="FIFOMode" type="uint32_t">
+  `DMA_FIFOMODE_ENABLE` to use the 4-word FIFO (required for burst transfers), or `DMA_FIFOMODE_DISABLE` for direct mode. Direct mode is simpler but incompatible with memory and peripheral burst settings.
+</ParamField>
+
+<ParamField path="FIFOThreshold" type="uint32_t">
+  When to flush the FIFO to memory. Ignored in direct mode.
+
+  | Value | Threshold |
+  |---|---|
+  | `DMA_FIFO_THRESHOLD_1QUARTERFULL` | 1 word |
+  | `DMA_FIFO_THRESHOLD_HALFFULL` | 2 words |
+  | `DMA_FIFO_THRESHOLD_3QUARTERSFULL` | 3 words |
+  | `DMA_FIFO_THRESHOLD_FULL` | 4 words (full FIFO) |
+</ParamField>
+
+<ParamField path="MemBurst" type="uint32_t">
+  Memory-side burst size. Requires `FIFOMode = DMA_FIFOMODE_ENABLE`. Options: `DMA_MBURST_SINGLE`, `DMA_MBURST_INC4`, `DMA_MBURST_INC8`, `DMA_MBURST_INC16`.
+</ParamField>
+
+<ParamField path="PeriphBurst" type="uint32_t">
+  Peripheral-side burst size. Options: `DMA_PBURST_SINGLE`, `DMA_PBURST_INC4`, `DMA_PBURST_INC8`, `DMA_PBURST_INC16`.
+</ParamField>
+
+## Functions
+
+### HAL_DMA_Init
+
+Initialises a DMA stream or BDMA channel with the parameters in the handle's `Init` field.
+
+```c
+HAL_StatusTypeDef HAL_DMA_Init(DMA_HandleTypeDef *hdma);
+```
+
+<ParamField path="hdma" type="DMA_HandleTypeDef *" required>
+  Handle whose `Instance` and `Init` fields are fully populated. The relevant DMA clock must be enabled before this call (`__HAL_RCC_DMA1_CLK_ENABLE()`, etc.).
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` on success. `HAL_ERROR` on invalid parameters.
+</ResponseField>
+
+---
+
+### HAL_DMA_DeInit
+
+Resets a DMA stream to its default state and disables it.
+
+```c
+HAL_StatusTypeDef HAL_DMA_DeInit(DMA_HandleTypeDef *hdma);
+```
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` on success.
+</ResponseField>
+
+---
+
+### HAL_DMA_Start
+
+Starts a DMA transfer in polling mode. The function returns immediately; use `HAL_DMA_PollForTransfer` to wait for completion.
+
+```c
+HAL_StatusTypeDef HAL_DMA_Start(DMA_HandleTypeDef *hdma,
+                                uint32_t SrcAddress,
+                                uint32_t DstAddress,
+                                uint32_t DataLength);
+```
+
+<ParamField path="hdma" type="DMA_HandleTypeDef *" required>
+  Initialised DMA handle.
+</ParamField>
+
+<ParamField path="SrcAddress" type="uint32_t" required>
+  Source address. For `DMA_PERIPH_TO_MEMORY`, this is the peripheral data register address. For `DMA_MEMORY_TO_PERIPH`, this is the memory buffer address.
+</ParamField>
+
+<ParamField path="DstAddress" type="uint32_t" required>
+  Destination address.
+</ParamField>
+
+<ParamField path="DataLength" type="uint32_t" required>
+  Number of data items (in units of the configured data alignment, not bytes).
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` if the stream started. `HAL_BUSY` if the stream is already active.
+</ResponseField>
+
+---
+
+### HAL_DMA_Start_IT
+
+Starts a DMA transfer in interrupt mode. The transfer-complete and half-transfer callbacks fire from the stream IRQ.
+
+```c
+HAL_StatusTypeDef HAL_DMA_Start_IT(DMA_HandleTypeDef *hdma,
+                                   uint32_t SrcAddress,
+                                   uint32_t DstAddress,
+                                   uint32_t DataLength);
+```
+
+Same parameters and return values as `HAL_DMA_Start`. Before calling this function, configure the NVIC and register callbacks with `HAL_DMA_RegisterCallback`.
+
+---
+
+### HAL_DMA_Abort
+
+Aborts an in-progress DMA transfer and waits (with a timeout) for the stream to disable.
+
+```c
+HAL_StatusTypeDef HAL_DMA_Abort(DMA_HandleTypeDef *hdma);
+```
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` if aborted cleanly. `HAL_TIMEOUT` if the stream did not stop within the timeout.
+</ResponseField>
+
+---
+
+### HAL_DMA_PollForTransfer
+
+Polls for half-transfer or full-transfer completion in polling mode. Blocks until the event occurs or the timeout expires.
+
+```c
+HAL_StatusTypeDef HAL_DMA_PollForTransfer(DMA_HandleTypeDef *hdma,
+                                          HAL_DMA_LevelCompleteTypeDef CompleteLevel,
+                                          uint32_t Timeout);
+```
+
+<ParamField path="CompleteLevel" type="HAL_DMA_LevelCompleteTypeDef" required>
+  `HAL_DMA_FULL_TRANSFER` or `HAL_DMA_HALF_TRANSFER`.
+</ParamField>
+
+<ParamField path="Timeout" type="uint32_t" required>
+  Timeout in milliseconds. Use `HAL_MAX_DELAY` to wait indefinitely.
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` on completion. `HAL_TIMEOUT` if the transfer did not complete in time. `HAL_ERROR` on a DMA error flag.
+</ResponseField>
+
+---
+
+### HAL_DMA_IRQHandler
+
+Call from the stream's IRQ handler. Reads, clears, and dispatches all pending DMA interrupt flags to the registered callbacks.
+
+```c
+void HAL_DMA_IRQHandler(DMA_HandleTypeDef *hdma);
+```
+
+## HAL_StatusTypeDef return values
+
+| Value | Meaning |
+|---|---|
+| `HAL_OK` (0) | Success |
+| `HAL_ERROR` (1) | Generic error — check parameters |
+| `HAL_BUSY` (2) | Resource in use |
+| `HAL_TIMEOUT` (3) | Operation timed out |
+
+## Examples
+
+<Tabs>
+  <Tab title="Memory-to-memory (polling)">
+    ```c
+    /* Copy 256 words from srcBuf to dstBuf using DMA2 stream 0 */
+
+    DMA_HandleTypeDef hdma;
+    uint32_t srcBuf[256];
+    uint32_t dstBuf[256];
+
+    /* Enable DMA2 clock */
+    __HAL_RCC_DMA2_CLK_ENABLE();
+
+    hdma.Instance                 = DMA2_Stream0;
+    hdma.Init.Request             = DMA_REQUEST_MEM2MEM;
+    hdma.Init.Direction           = DMA_MEMORY_TO_MEMORY;
+    hdma.Init.PeriphInc           = DMA_PINC_ENABLE;
+    hdma.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hdma.Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
+    hdma.Init.Mode                = DMA_NORMAL;
+    hdma.Init.Priority            = DMA_PRIORITY_MEDIUM;
+    hdma.Init.FIFOMode            = DMA_FIFOMODE_ENABLE;
+    hdma.Init.FIFOThreshold       = DMA_FIFO_THRESHOLD_FULL;
+    hdma.Init.MemBurst            = DMA_MBURST_INC4;
+    hdma.Init.PeriphBurst         = DMA_PBURST_INC4;
+
+    if (HAL_DMA_Init(&hdma) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    HAL_DMA_Start(&hdma, (uint32_t)srcBuf, (uint32_t)dstBuf, 256);
+    HAL_DMA_PollForTransfer(&hdma, HAL_DMA_FULL_TRANSFER, HAL_MAX_DELAY);
+    ```
+  </Tab>
+  <Tab title="Peripheral-to-memory (interrupt)">
+    ```c
+    /* Receive USART1 data into rxBuf using DMA1 stream 0, interrupt mode */
+
+    DMA_HandleTypeDef hdma_usart1_rx;
+    uint8_t rxBuf[64];
+
+    __HAL_RCC_DMA1_CLK_ENABLE();
+
+    hdma_usart1_rx.Instance                 = DMA1_Stream0;
+    hdma_usart1_rx.Init.Request             = DMA_REQUEST_USART1_RX;
+    hdma_usart1_rx.Init.Direction           = DMA_PERIPH_TO_MEMORY;
+    hdma_usart1_rx.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hdma_usart1_rx.Init.MemInc              = DMA_MINC_ENABLE;
+    hdma_usart1_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+    hdma_usart1_rx.Init.MemDataAlignment    = DMA_MDATAALIGN_BYTE;
+    hdma_usart1_rx.Init.Mode                = DMA_NORMAL;
+    hdma_usart1_rx.Init.Priority            = DMA_PRIORITY_HIGH;
+    hdma_usart1_rx.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+
+    HAL_DMA_Init(&hdma_usart1_rx);
+
+    /* Register transfer-complete callback */
+    HAL_DMA_RegisterCallback(&hdma_usart1_rx,
+                             HAL_DMA_XFER_CPLT_CB_ID,
+                             DMA_RxCpltCallback);
+
+    HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 1, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+
+    /* Link handle to UART and start receive */
+    extern UART_HandleTypeDef huart1;
+    __HAL_LINKDMA(&huart1, hdmarx, hdma_usart1_rx);
+    HAL_UART_Receive_DMA(&huart1, rxBuf, sizeof(rxBuf));
+
+    /* IRQ handler in stm32h7xx_it.c */
+    void DMA1_Stream0_IRQHandler(void)
+    {
+        HAL_DMA_IRQHandler(&hdma_usart1_rx);
+    }
+    ```
+  </Tab>
+  <Tab title="BDMA circular (D3 domain)">
+    ```c
+    /* Continuously write from D3 SRAM to GPIOB ODR using BDMA channel 0
+       triggered by an LPTIM — LED toggle without CPU involvement */
+
+    DMA_HandleTypeDef hbdma;
+    /* Buffer must reside in D3 SRAM (0x38000000) for BDMA access */
+    uint32_t toggleBuf[2] __attribute__((section(".RAM_D3"))) = {0, GPIO_PIN_0};
+
+    __HAL_RCC_BDMA_CLK_ENABLE();
+
+    hbdma.Instance                 = BDMA_Channel0;
+    hbdma.Init.Request             = BDMA_REQUEST_GENERATOR0;
+    hbdma.Init.Direction           = DMA_MEMORY_TO_PERIPH;
+    hbdma.Init.PeriphInc           = DMA_PINC_DISABLE;
+    hbdma.Init.MemInc              = DMA_MINC_ENABLE;
+    hbdma.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
+    hbdma.Init.MemDataAlignment    = DMA_MDATAALIGN_WORD;
+    hbdma.Init.Mode                = DMA_CIRCULAR;
+    hbdma.Init.Priority            = DMA_PRIORITY_LOW;
+    hbdma.Init.FIFOMode            = DMA_FIFOMODE_DISABLE;
+
+    HAL_DMA_Init(&hbdma);
+    HAL_DMA_Start(&hbdma, (uint32_t)toggleBuf,
+                  (uint32_t)&GPIOB->ODR, 2);
+    ```
+  </Tab>
+</Tabs>
+
+<Warning>
+  On STM32H7, DMA-accessed buffers that reside in D1 AXI SRAM must be cache-aligned (32-byte boundary) and explicitly flushed/invalidated with `SCB_CleanDCache_by_Addr` (before TX) and `SCB_InvalidateDCache_by_Addr` (after RX) to maintain cache coherency. Failure to do so causes silent data corruption.
+</Warning>

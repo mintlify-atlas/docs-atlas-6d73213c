@@ -1,0 +1,206 @@
+---
+title: "FatFs file system middleware for STM32H7"
+description: "FatFs on STM32H7: mount FAT volumes on SD cards, USB drives, or QSPI Flash using f_mount, f_open, f_read, f_write, f_close, and DMA-safe diskio driver wiring."
+---
+
+STM32CubeH7 includes FatFs as a third-party submodule at `Middlewares/Third_Party/FatFs/`. FatFs is a generic FAT/exFAT file system module that is decoupled from the storage medium through a diskio driver layer. ST provides ready-made diskio drivers for SD (SDMMC), USB MSC, and QSPI Flash in each application example. The file system is configured through `ffconf.h`, which is placed in the project `Inc/` directory.
+
+<Note>
+The FatFs submodule directory is empty until you run `git submodule update --init`. The FatFs source files (`ff.c`, `ff.h`, `diskio.h`, `ffconf.h`) are present after initialisation.
+</Note>
+
+## Key source files
+
+```
+Middlewares/Third_Party/FatFs/source/
+├── ff.c          # FatFs file system core
+├── ff.h          # FatFs public API
+├── diskio.h      # Disk I/O interface (implement per storage medium)
+├── ffconf.h      # Feature configuration (copy to project Inc/)
+└── ffsystem.c    # OS-dependent functions (mutex, heap)
+```
+
+Each application also provides:
+
+```
+Projects/<board>/Applications/FatFS/<example>/Src/
+├── main.c        # Application logic using f_open / f_read / f_write
+└── sd_diskio.c   # SDMMC diskio driver implementation
+```
+
+## Getting started
+
+<Steps>
+  <Step title="Add FatFs source files to your project">
+    Include `ff.c` and `ffsystem.c` from `Middlewares/Third_Party/FatFs/source/`. Copy `ffconf.h` to your project `Inc/` directory and adjust features (long file name support, sector size, code page, etc.).
+  </Step>
+  <Step title="Implement the diskio driver">
+    Copy or write a `sd_diskio.c` (for SD) that implements `disk_initialize`, `disk_status`, `disk_read`, `disk_write`, and `disk_ioctl`. The NUCLEO-H743ZI example provides `sd_diskio.c` as a reference.
+  </Step>
+  <Step title="Register the driver and mount the volume">
+    Call `FATFS_LinkDriver()` to register the diskio driver, then `f_mount()` to mount the volume. Pass `0` as the mount option to defer mounting until the first file access, or `1` to mount immediately.
+  </Step>
+  <Step title="Perform file operations">
+    Use `f_open`, `f_write`, `f_read`, and `f_close`. Always check `FRESULT` return codes. Call `FATFS_UnLinkDriver()` when done.
+  </Step>
+</Steps>
+
+## SD card file write and read example
+
+The `FatFS_uSD_Standalone` example (`Projects/NUCLEO-H743ZI/Applications/FatFS/FatFS_uSD_Standalone/`) demonstrates the complete workflow. The hardware uses an Adafruit 1.8" TFT shield connected to the Arduino headers on the NUCLEO-H743ZI board:
+
+```c
+#include "ff.h"
+#include "ff_gen_drv.h"
+#include "sd_diskio.h"
+
+FATFS SDFatFs;   /* File system object for the SD card logical drive */
+FIL   MyFile;    /* File object                                       */
+char  SDPath[4]; /* SD card logical drive path, e.g. "0:/"           */
+
+uint8_t workBuffer[_MAX_SS]; /* Format work buffer */
+
+static void FS_FileOperations(void)
+{
+    FRESULT  res;
+    uint32_t byteswritten, bytesread;
+    uint8_t  wtext[] = "This is STM32 working with FatFs + uSD";
+    uint8_t  rtext[100];
+
+    /* Mount the SD card volume */
+    if (f_mount(&SDFatFs, (TCHAR const *)SDPath, 0) == FR_OK)
+    {
+        /* Create (or overwrite) and open a file for writing */
+        if (f_open(&MyFile, "STM32.TXT", FA_CREATE_ALWAYS | FA_WRITE) == FR_OK)
+        {
+            /* Write data */
+            res = f_write(&MyFile, wtext, sizeof(wtext),
+                          (void *)&byteswritten);
+
+            if ((byteswritten > 0) && (res == FR_OK))
+            {
+                f_close(&MyFile);
+
+                /* Re-open the file for reading */
+                if (f_open(&MyFile, "STM32.TXT", FA_READ) == FR_OK)
+                {
+                    /* Read the data back */
+                    res = f_read(&MyFile, rtext, sizeof(rtext),
+                                 (void *)&bytesread);
+
+                    if ((bytesread > 0) && (res == FR_OK))
+                    {
+                        f_close(&MyFile);
+
+                        /* Verify round-trip integrity */
+                        if (bytesread == byteswritten)
+                        {
+                            BSP_LED_On(LED1); /* Success */
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    /* Initialise the SD interface (Adafruit shield) */
+    ADAFRUIT_802_SD_Init(0);
+
+    /* Link the SD card diskio driver */
+    if (FATFS_LinkDriver(&SD_Driver, SDPath) == 0)
+    {
+        /* Format the SD card — NOTE: this erases all data */
+        f_mkfs(SDPath, FM_ANY, 0, workBuffer, sizeof(workBuffer));
+
+        FS_FileOperations();
+    }
+
+    FATFS_UnLinkDriver(SDPath);
+
+    while (1) {}
+}
+```
+
+<Warning>
+`f_mkfs()` formats the SD card, erasing all existing data. The example always formats on startup. Remove this call (or guard it with a check) if you need to preserve existing files.
+</Warning>
+
+## FatFs API quick reference
+
+| Function | Description |
+|----------|-------------|
+| `f_mount(&fs, path, opt)` | Register/unregister a file system object. `opt=1` mounts immediately. |
+| `f_open(&fp, path, mode)` | Open or create a file. Mode flags: `FA_READ`, `FA_WRITE`, `FA_CREATE_ALWAYS`, `FA_OPEN_EXISTING`. |
+| `f_read(&fp, buf, btr, &br)` | Read `btr` bytes into `buf`. `br` receives the number of bytes actually read. |
+| `f_write(&fp, buf, btw, &bw)` | Write `btw` bytes from `buf`. `bw` receives the number of bytes written. |
+| `f_close(&fp)` | Flush and close the file. Always close before removing power. |
+| `f_lseek(&fp, ofs)` | Move the file read/write pointer. |
+| `f_sync(&fp)` | Flush pending writes without closing the file. |
+| `f_mkdir(path)` | Create a new directory. |
+| `f_unlink(path)` | Remove a file or empty directory. |
+| `f_mkfs(path, opt, au, buf, sz)` | Format a volume. |
+
+## FRESULT error codes
+
+Common return values from FatFs functions:
+
+```c
+FR_OK              /* (0) Succeeded                        */
+FR_DISK_ERR        /* (1) Hard error in the low level I/O  */
+FR_NOT_READY       /* (3) Physical drive not ready         */
+FR_NO_FILE         /* (4) Could not find the file          */
+FR_NO_PATH         /* (5) Could not find the path          */
+FR_INVALID_NAME    /* (6) The path name format is invalid  */
+FR_NO_FILESYSTEM   /* (13) There is no valid FAT volume    */
+FR_MKFS_ABORTED    /* (14) f_mkfs() aborted                */
+```
+
+<Tip>
+Always check the `FRESULT` from every FatFs call. A return value other than `FR_OK` indicates that the operation did not complete. The most frequent cause of `FR_DISK_ERR` is a missing or improperly seated SD card.
+</Tip>
+
+## ffconf.h configuration options
+
+The `ffconf.h` placed in your project `Inc/` directory controls which FatFs features are compiled in:
+
+```c
+#define FF_FS_READONLY    0    /* 0: read/write, 1: read-only         */
+#define FF_USE_MKFS       1    /* 1: enable f_mkfs()                  */
+#define FF_USE_FIND       0    /* 1: enable f_findfirst / f_findnext  */
+#define FF_USE_LFN        1    /* 1: LFN support (heap allocation)    */
+#define FF_MAX_LFN        255  /* Maximum LFN length                  */
+#define FF_CODE_PAGE      932  /* OEM code page (932 = Shift-JIS)     */
+#define FF_FS_EXFAT       0    /* 1: enable exFAT support             */
+#define FF_MAX_SS         512  /* Maximum sector size (512 or 4096)   */
+```
+
+## Cache coherency for DMA-based disk I/O
+
+<Warning>
+SDMMC DMA transfers on STM32H7 are subject to the same L1 cache restrictions as Ethernet DMA. Read/write buffers passed to `f_read` and `f_write` must be placed in non-TCM SRAM and aligned to 32-byte cache line boundaries when D-Cache is enabled. Use `SCB_CleanDCache_by_Addr` before a write transfer and `SCB_InvalidateDCache_by_Addr` after a read transfer if your diskio driver uses DMA.
+</Warning>
+
+## Reference examples
+
+<CardGroup cols={2}>
+  <Card title="FatFS_uSD_Standalone (NUCLEO-H743ZI)" icon="sd-card">
+    Mount, format, write, and read-back a text file on a microSD card via an Adafruit shield. Bare-metal (no RTOS).
+    `Projects/NUCLEO-H743ZI/Applications/FatFS/FatFS_uSD_Standalone/`
+  </Card>
+  <Card title="USB Host MSC + FatFs" icon="usb">
+    FatFs mounted on a USB flash drive via the STM32 USB Host MSC class.
+    `Projects/NUCLEO-H723ZG/Applications/USB_Host/MSC_Standalone/`
+  </Card>
+</CardGroup>
+
+## Further reading
+
+- UM1723 — *STM32Cube firmware for STM32H7 Series*
+- AN4838 — *Managing memory protection unit (MPU) in STM32 MCUs*
+- FatFs documentation at `http://elm-chan.org/fsw/ff/` (bundled in submodule)

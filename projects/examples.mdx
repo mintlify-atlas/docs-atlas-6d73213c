@@ -1,0 +1,183 @@
+---
+title: "STM32H7 peripheral examples and LL driver demos"
+description: "Browse the HAL and LL peripheral examples shipped with STM32CubeH7, from ADC and GPIO to JPEG, LCD-DSI, and SPDIFRX on discovery kits."
+---
+
+The `Examples/` and `Examples_LL/` directories contain single-peripheral, single-concept projects designed to demonstrate one HAL or LL feature in isolation. Each example is self-contained: it includes its own `main.c`, startup file, linker scripts, and IDE project files. They are the fastest way to verify hardware bring-up or understand a specific peripheral's API.
+
+## NUCLEO-H743ZI examples
+
+The NUCLEO-H743ZI board provides the broadest example coverage. All 25 peripheral categories below are available under `Projects/NUCLEO-H743ZI/Examples/`.
+
+<CardGroup cols={3}>
+  <Card title="ADC" icon="chart-line">
+    9 examples: DMA transfer, dual-mode interleaved, differential mode, analog watchdog, oversampler, DAC interconnect, regular/injected groups, internal channel, and polling conversion.
+  </Card>
+  <Card title="BSP" icon="circuit-board">
+    Board support package demo — exercises the on-board LEDs, user button, and COM port via the BSP abstraction layer.
+  </Card>
+  <Card title="COMP" icon="code-compare">
+    Comparator examples using both HAL and LL drivers.
+  </Card>
+  <Card title="CRC" icon="shield-check">
+    CRC computation using the hardware CRC unit with configurable polynomials.
+  </Card>
+  <Card title="DAC" icon="wave-square">
+    Digital-to-analog output, noise generation, and triangle waveform modes.
+  </Card>
+  <Card title="DMA" icon="arrows-left-right">
+    Memory-to-memory and peripheral-to-memory transfers, including FIFO and burst modes.
+  </Card>
+  <Card title="FLASH" icon="hard-drive">
+    Internal flash erase and program operations using the HAL FLASH driver.
+  </Card>
+  <Card title="GPIO" icon="plug">
+    GPIO_Demo (LED blink with EXTI button speed control) and GPIO_EXTI (interrupt-driven toggle).
+  </Card>
+  <Card title="HAL" icon="sliders">
+    HAL timebase examples using a general-purpose timer instead of SysTick.
+  </Card>
+  <Card title="HRTIM" icon="clock">
+    High-resolution timer waveform generation and PWM modes.
+  </Card>
+  <Card title="HSEM" icon="lock">
+    Hardware semaphore usage for resource sharing between cores or masters.
+  </Card>
+  <Card title="I2C" icon="network-wired">
+    Master/slave communication, DMA transfers, and bus error recovery.
+  </Card>
+  <Card title="IWDG" icon="dog">
+    Independent watchdog configuration and refresh patterns.
+  </Card>
+  <Card title="LPTIM" icon="timer">
+    Low-power timer wakeup from Stop mode and pulse counting.
+  </Card>
+  <Card title="MDMA" icon="arrows-split-up-and-left">
+    Master DMA transfers between memory regions in different power domains.
+  </Card>
+  <Card title="OPAMP" icon="amplifier">
+    Operational amplifier calibration and follower/PGA mode.
+  </Card>
+  <Card title="PWR" icon="battery-half">
+    Sleep, Stop, and Standby mode entry and wakeup sequences.
+  </Card>
+  <Card title="RCC" icon="rotate">
+    Clock source selection, PLL configuration, and MCO output.
+  </Card>
+  <Card title="RNG" icon="dice">
+    Random number generation using the hardware TRNG peripheral.
+  </Card>
+  <Card title="RTC" icon="calendar">
+    Calendar, alarm, wakeup timer, and backup register examples.
+  </Card>
+  <Card title="SPI" icon="arrows-left-right-to-line">
+    Full-duplex master, half-duplex, DMA, and interrupt modes.
+  </Card>
+  <Card title="TIM" icon="stopwatch">
+    12 examples: TimeBase, PWMOutput, InputCapture, OCToggle, OnePulse, ComplementarySignals, DMA, DMABurst, 6Steps, Asymetric, Combined, and Synchronization.
+  </Card>
+  <Card title="UART / USART" icon="terminal">
+    Polling, interrupt, DMA, half-duplex, and RS-485 modes.
+  </Card>
+  <Card title="WWDG" icon="shield">
+    Window watchdog configuration with early-wakeup interrupt.
+  </Card>
+</CardGroup>
+
+## STM32H747I-DISCO additional examples
+
+The STM32H747I-DISCO Discovery kit adds multimedia and high-bandwidth peripheral examples that require the on-board hardware (DSI display, JPEG hardware accelerator, camera interface, SPDIF receiver):
+
+| Category | Notable examples |
+|---|---|
+| `DCMI` | Camera interface capture from the on-board OV5640 sensor |
+| `DMA2D` | Chrom-ART hardware blending, color conversion, and memory fill |
+| `JPEG` | Hardware JPEG encoding and decoding |
+| `LCD_DSI` | DSI display initialization and framebuffer rendering |
+| `SPDIFRX` | S/PDIF digital audio reception |
+
+## GPIO blink example walkthrough
+
+`Projects/NUCLEO-H743ZI/Examples/GPIO/GPIO_Demo` is a good first project to open. It demonstrates LED toggle speed control driven by a user button press through EXTI.
+
+```c
+/* GPIO/GPIO_Demo/Src/main.c — main loop */
+#define LED_BLINK_FAST    100   /* ms */
+#define LED_BLINK_MEDIUM  500
+#define LED_BLINK_SLOW    1000
+
+volatile uint16_t blink_interval = LED_BLINK_FAST;
+Led_TypeDef led_name = LED3;
+
+int main(void)
+{
+  MPU_Config();
+  CPU_CACHE_Enable();
+  HAL_Init();
+  SystemClock_Config();   /* 400 MHz via PLL1, HSE bypass */
+
+  BSP_LED_Init(LED1);
+  BSP_LED_Init(LED2);
+  BSP_LED_Init(LED3);
+
+  EXTI15_10_IRQHandler_Config();   /* PC.13 user button → EXTI */
+
+  while (1)
+  {
+    BSP_LED_Toggle(led_name);
+    HAL_Delay(blink_interval);
+  }
+}
+```
+
+Each press of the user button (PC.13, EXTI line 13) cycles through slow → medium → fast blink speeds and rotates the active LED. The EXTI callback includes a 200 ms debounce guard:
+
+```c
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == GPIO_PIN_13)
+  {
+    uint32_t current_time = HAL_GetTick();
+    if ((current_time - last_button_press) > DEBOUNCE_DELAY)
+    {
+      last_button_press = current_time;
+      button_press_count++;
+      if (button_press_count > 3) button_press_count = 1;
+
+      switch (button_press_count)
+      {
+        case 1: blink_interval = LED_BLINK_MEDIUM; led_name = LED2; break;
+        case 2: blink_interval = LED_BLINK_SLOW;   led_name = LED1; break;
+        case 3: blink_interval = LED_BLINK_FAST;   led_name = LED3; break;
+      }
+    }
+  }
+}
+```
+
+<Tip>
+Every example calls `MPU_Config()` and `CPU_CACHE_Enable()` before `HAL_Init()`. This pattern enables the Cortex-M7 L1 I-Cache and D-Cache and configures a catch-all MPU region to prevent speculative access to undefined memory. Copy this sequence into any new project.
+</Tip>
+
+## LL (low-layer) examples
+
+`Projects/NUCLEO-H743ZI/Examples_LL/` provides the same peripheral concepts as `Examples/` but written against the LL API. LL drivers access hardware registers directly without the HAL abstraction overhead, which makes them suitable for latency-critical or memory-constrained code.
+
+Six LL peripheral categories are available on NUCLEO-H743ZI:
+
+```text
+Examples_LL/
+├── COMP/
+├── DAC/
+├── PWR/
+├── RTC/
+└── SPI/
+```
+
+<Note>
+LL examples do not use `HAL_Init()` or `HAL_Delay()`. Initialization is done via `LL_*` functions. For example, clock configuration in `Templates_LL` calls `LL_RCC_HSE_Enable()`, `LL_RCC_PLL1_SetN()`, and `LL_RCC_SetSysClkSource()` directly instead of the HAL `RCC_OscInitTypeDef` structures.
+</Note>
+
+## Examples_MIX
+
+`Projects/STM32H7B3I-DK/Examples_MIX/` contains a single `DMA2D/` project that combines HAL and LL calls within the same source file. This is useful when HAL covers most of a peripheral's setup but LL is needed for a time-critical path.

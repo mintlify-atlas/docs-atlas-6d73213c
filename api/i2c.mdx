@@ -1,0 +1,313 @@
+---
+title: "HAL I2C driver — two-wire interface communication"
+description: "STM32H7 HAL I2C driver: timing register calculation, I2C_InitTypeDef fields, master/slave polling and interrupt/DMA transfers, and EEPROM-style memory access."
+---
+
+The STM32H7 I2C peripheral uses a timing-register–based configuration that replaces the clock-divider approach found on STM32F1/F2/F4. A single 32-bit `Timing` field encodes prescaler, data setup/hold times, and SCL high/low periods, giving precise control over waveform shape regardless of the peripheral clock. STM32H7 devices include I2C1 through I2C4, all supporting Standard Mode (100 kHz), Fast Mode (400 kHz), and Fast Mode Plus (1 MHz).
+
+<Note>
+The `Timing` register value depends on the I2C peripheral clock source and the desired SCL frequency. ST provides an Excel-based timing calculator (STSW-STM32126) and CubeMX generates the correct value automatically. The value is **not** interchangeable between devices or clock configurations.
+</Note>
+
+## I2C_InitTypeDef
+
+<ParamField path="Init.Timing" type="uint32_t" required>
+  Packed timing register value. Encodes `PRESC`, `SCLDEL`, `SDADEL`, `SCLH`, and `SCLL`. Example: `0x00901954` gives 400 kHz Fast Mode with a 100 MHz I2C peripheral clock (10 ns rise, 10 ns fall).
+</ParamField>
+
+<ParamField path="Init.OwnAddress1" type="uint32_t" required>
+  Primary address in 7-bit or 10-bit format (left-aligned for 7-bit: `0x52 << 1`). Set to `0` for master-only configurations.
+</ParamField>
+
+<ParamField path="Init.AddressingMode" type="uint32_t" required>
+  Address width: `I2C_ADDRESSINGMODE_7BIT` or `I2C_ADDRESSINGMODE_10BIT`.
+</ParamField>
+
+<ParamField path="Init.DualAddressMode" type="uint32_t" required>
+  Enable a second slave address: `I2C_DUALADDRESS_DISABLE` or `I2C_DUALADDRESS_ENABLE`. When enabled, set `OwnAddress2` and `OwnAddress2Masks`.
+</ParamField>
+
+<ParamField path="Init.OwnAddress2" type="uint32_t">
+  Secondary 7-bit slave address, used when `DualAddressMode` is enabled.
+</ParamField>
+
+<ParamField path="Init.GeneralCallMode" type="uint32_t" required>
+  Accept the general-call address (0x00): `I2C_GENERALCALL_DISABLE` or `I2C_GENERALCALL_ENABLE`.
+</ParamField>
+
+<ParamField path="Init.NoStretchMode" type="uint32_t" required>
+  Clock-stretching behaviour in slave mode: `I2C_NOSTRETCH_DISABLE` (default, stretching enabled) or `I2C_NOSTRETCH_ENABLE` (disable stretching — the slave must respond within one clock cycle).
+</ParamField>
+
+## Timing register calculation
+
+The timing register value for 400 kHz Fast Mode with a 100 MHz peripheral clock (APB1 = SYSCLK/4 at 400 MHz) is `0x00901954`. The breakdown is:
+
+| Field | Value | Meaning |
+|---|---|---|
+| PRESC | 0 | Prescaler = 1 (no division) |
+| SCLDEL | 9 | Data setup time = (9+1) × tI2CCLK = 100 ns |
+| SDADEL | 0 | Data hold time = 0 × tI2CCLK |
+| SCLH | 0x19 (25) | SCL high = (25+1) × tI2CCLK = 260 ns |
+| SCLL | 0x54 (84) | SCL low = (84+1) × tI2CCLK = 850 ns |
+
+```c
+/* I2C1 at 400 kHz, APB1 = 100 MHz */
+#define I2C1_TIMING  0x00901954
+
+hi2c1.Instance             = I2C1;
+hi2c1.Init.Timing          = I2C1_TIMING;
+hi2c1.Init.OwnAddress1     = 0;
+hi2c1.Init.AddressingMode  = I2C_ADDRESSINGMODE_7BIT;
+hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+hi2c1.Init.OwnAddress2     = 0;
+hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+hi2c1.Init.NoStretchMode   = I2C_NOSTRETCH_DISABLE;
+
+HAL_I2C_Init(&hi2c1);
+HAL_I2CEx_ConfigAnalogFilter(&hi2c1, I2C_ANALOGFILTER_ENABLE);
+```
+
+## Initialization
+
+### HAL_I2C_Init
+
+```c
+HAL_StatusTypeDef HAL_I2C_Init(I2C_HandleTypeDef *hi2c);
+```
+
+Configures the I2C peripheral and calls `HAL_I2C_MspInit` for GPIO and clock setup.
+
+### HAL_I2C_DeInit
+
+```c
+HAL_StatusTypeDef HAL_I2C_DeInit(I2C_HandleTypeDef *hi2c);
+```
+
+Disables the peripheral and calls `HAL_I2C_MspDeInit`.
+
+## Transfer functions
+
+<Tabs>
+  <Tab title="Polling">
+    Blocking transfers that wait until the bus transaction completes or the timeout expires. Suitable for initialization sequences and low-frequency sensor reads.
+
+    ### HAL_I2C_Master_Transmit
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Transmit(I2C_HandleTypeDef *hi2c,
+                                               uint16_t DevAddress,
+                                               uint8_t *pData,
+                                               uint16_t Size,
+                                               uint32_t Timeout);
+    ```
+
+    Sends a START, the 7-bit (or 10-bit) device address with W bit, `Size` bytes, then STOP.
+
+    ### HAL_I2C_Master_Receive
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Receive(I2C_HandleTypeDef *hi2c,
+                                              uint16_t DevAddress,
+                                              uint8_t *pData,
+                                              uint16_t Size,
+                                              uint32_t Timeout);
+    ```
+
+    Issues START + address + R bit, reads `Size` bytes (NAKing the last), then STOP.
+
+    ### HAL_I2C_Slave_Transmit
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Slave_Transmit(I2C_HandleTypeDef *hi2c,
+                                              uint8_t *pData,
+                                              uint16_t Size,
+                                              uint32_t Timeout);
+    ```
+
+    ### HAL_I2C_Slave_Receive
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Slave_Receive(I2C_HandleTypeDef *hi2c,
+                                             uint8_t *pData,
+                                             uint16_t Size,
+                                             uint32_t Timeout);
+    ```
+
+    ```c
+    uint8_t cmd = 0x01;
+    uint8_t data[4];
+
+    /* Write command byte, then read 4 bytes from a sensor at address 0x48 */
+    HAL_I2C_Master_Transmit(&hi2c1, 0x48 << 1, &cmd, 1, 1000);
+    HAL_I2C_Master_Receive(&hi2c1,  0x48 << 1, data, 4, 1000);
+    ```
+  </Tab>
+
+  <Tab title="Memory access">
+    These convenience functions target addressable devices such as EEPROMs and sensor register maps. They generate a combined write (address phase) followed by either write or read data in a single I2C transaction.
+
+    ### HAL_I2C_Mem_Write
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Mem_Write(I2C_HandleTypeDef *hi2c,
+                                         uint16_t DevAddress,
+                                         uint16_t MemAddress,
+                                         uint16_t MemAddSize,
+                                         uint8_t *pData,
+                                         uint16_t Size,
+                                         uint32_t Timeout);
+    ```
+
+    `MemAddSize` is `I2C_MEMADD_SIZE_8BIT` or `I2C_MEMADD_SIZE_16BIT`.
+
+    ### HAL_I2C_Mem_Read
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Mem_Read(I2C_HandleTypeDef *hi2c,
+                                        uint16_t DevAddress,
+                                        uint16_t MemAddress,
+                                        uint16_t MemAddSize,
+                                        uint8_t *pData,
+                                        uint16_t Size,
+                                        uint32_t Timeout);
+    ```
+
+    ```c
+    /* Write 8 bytes to EEPROM (24C02) at device address 0x50, memory offset 0x10 */
+    uint8_t payload[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+    HAL_I2C_Mem_Write(&hi2c1, 0x50 << 1, 0x10, I2C_MEMADD_SIZE_8BIT,
+                      payload, sizeof(payload), 1000);
+
+    /* 5 ms page-write delay for EEPROM */
+    HAL_Delay(5);
+
+    /* Read back the same bytes */
+    uint8_t readBuf[8];
+    HAL_I2C_Mem_Read(&hi2c1, 0x50 << 1, 0x10, I2C_MEMADD_SIZE_8BIT,
+                     readBuf, sizeof(readBuf), 1000);
+    ```
+  </Tab>
+
+  <Tab title="Interrupt">
+    Non-blocking interrupt-driven transfers. The HAL raises a callback on completion.
+
+    ### HAL_I2C_Master_Transmit_IT
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Transmit_IT(I2C_HandleTypeDef *hi2c,
+                                                  uint16_t DevAddress,
+                                                  uint8_t *pData,
+                                                  uint16_t Size);
+    ```
+
+    ### HAL_I2C_Master_Receive_IT
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Receive_IT(I2C_HandleTypeDef *hi2c,
+                                                 uint16_t DevAddress,
+                                                 uint8_t *pData,
+                                                 uint16_t Size);
+    ```
+
+    Call `HAL_I2C_EV_IRQHandler` and `HAL_I2C_ER_IRQHandler` from the I2C event and error IRQ handlers respectively.
+
+    ```c
+    /* stm32h7xx_it.c */
+    void I2C1_EV_IRQHandler(void) { HAL_I2C_EV_IRQHandler(&hi2c1); }
+    void I2C1_ER_IRQHandler(void) { HAL_I2C_ER_IRQHandler(&hi2c1); }
+
+    /* Start non-blocking transmit */
+    uint8_t txBuf[4] = {0xAB, 0xCD, 0xEF, 0x00};
+    HAL_I2C_Master_Transmit_IT(&hi2c1, 0x48 << 1, txBuf, sizeof(txBuf));
+
+    /* Callback */
+    void HAL_I2C_MasterTxCpltCallback(I2C_HandleTypeDef *hi2c)
+    {
+      if (hi2c->Instance == I2C1)
+      {
+        /* Transmit complete, optionally kick off a receive */
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="DMA">
+    DMA transfers off-load byte movement from the CPU entirely.
+
+    ### HAL_I2C_Master_Transmit_DMA
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Transmit_DMA(I2C_HandleTypeDef *hi2c,
+                                                   uint16_t DevAddress,
+                                                   uint8_t *pData,
+                                                   uint16_t Size);
+    ```
+
+    ### HAL_I2C_Master_Receive_DMA
+
+    ```c
+    HAL_StatusTypeDef HAL_I2C_Master_Receive_DMA(I2C_HandleTypeDef *hi2c,
+                                                  uint16_t DevAddress,
+                                                  uint8_t *pData,
+                                                  uint16_t Size);
+    ```
+
+    <Warning>
+    DMA buffers must be in AXI SRAM. DTCM is not accessible by the DMA1/DMA2 controllers. If D-Cache is enabled, clean the cache before DMA TX (`SCB_CleanDCache_by_Addr`) and invalidate before reading RX data (`SCB_InvalidateDCache_by_Addr`).
+    </Warning>
+
+    ```c
+    #if defined ( __GNUC__ )
+    __attribute__((section(".dma_buffer")))
+    #endif
+    uint8_t dmaBuf[32];
+
+    HAL_I2C_Master_Receive_DMA(&hi2c1, 0x48 << 1, dmaBuf, sizeof(dmaBuf));
+
+    void HAL_I2C_MasterRxCpltCallback(I2C_HandleTypeDef *hi2c)
+    {
+      SCB_InvalidateDCache_by_Addr((uint32_t *)dmaBuf, sizeof(dmaBuf));
+      /* dmaBuf is valid here */
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Callbacks
+
+| Function | Trigger |
+|---|---|
+| `HAL_I2C_MasterTxCpltCallback` | Master transmit complete |
+| `HAL_I2C_MasterRxCpltCallback` | Master receive complete |
+| `HAL_I2C_SlaveTxCpltCallback` | Slave transmit complete |
+| `HAL_I2C_SlaveRxCpltCallback` | Slave receive complete |
+| `HAL_I2C_MemTxCpltCallback` | `HAL_I2C_Mem_Write_IT/_DMA` complete |
+| `HAL_I2C_MemRxCpltCallback` | `HAL_I2C_Mem_Read_IT/_DMA` complete |
+| `HAL_I2C_ErrorCallback` | Any transfer error |
+| `HAL_I2C_AbortCpltCallback` | Abort sequence complete |
+
+Inspect `hi2c->ErrorCode` inside `HAL_I2C_ErrorCallback`. Common codes:
+
+| Constant | Meaning |
+|---|---|
+| `HAL_I2C_ERROR_BERR` | Bus error |
+| `HAL_I2C_ERROR_ARLO` | Arbitration lost |
+| `HAL_I2C_ERROR_AF` | Acknowledge failure (slave NAK) |
+| `HAL_I2C_ERROR_OVR` | Overrun / underrun |
+| `HAL_I2C_ERROR_TIMEOUT` | Hardware timeout |
+
+<Note>
+Acknowledge failures (`HAL_I2C_ERROR_AF`) are normal when scanning the bus or when a slave is not yet ready. The master should retry rather than treating this as a fatal error.
+</Note>
+
+## Fast Mode Plus (1 MHz)
+
+I2C1 and I2C2 on STM32H7 can operate at 1 MHz Fast Mode Plus. Enable the internal 20 mA current source on the SCL and SDA pins:
+
+```c
+/* Enable Fast Mode Plus drive on I2C1 pins */
+HAL_I2CEx_EnableFastModePlus(I2C_FASTMODEPLUS_I2C1);
+```
+
+Use a timing register value appropriate for the target frequency (calculated with STM32CubeMX or the STSW-STM32126 tool).

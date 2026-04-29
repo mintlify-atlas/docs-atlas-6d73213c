@@ -1,0 +1,160 @@
+---
+title: "HAL HRTIM driver — high-resolution timer (HRTIM) API"
+description: "Generate sub-nanosecond-accurate PWM waveforms for power conversion and motor control on STM32H7 using the five-unit HRTIM peripheral and HAL HRTIM driver."
+---
+
+The HRTIM (High-Resolution Timer) delivers 184 ps timing resolution — approximately 27× finer than a standard 32-bit timer at the same clock frequency. It consists of a master timer and five independent timer units (Timer A through Timer E), each capable of generating two complementary PWM outputs. HRTIM is the peripheral of choice for switched-mode power supplies, digital power controllers, and high-frequency motor drives where precise dead-time and phase control are critical.
+
+HRTIM is located in the D1 power domain and clocked from APB2. When the CPU runs at 400 MHz with APB2 at 200 MHz, the HRTIM input clock is 400 MHz (APB2 × 2). A 14-step Delay Locked Loop (DLL) multiplies this to approximately 4.6 GHz internally, producing the 184 ps resolution step.
+
+<Note>
+  The HRTIM outputs on STM32H7 are only available on specific GPIO pins. Timer A outputs TA1/TA2 map to PA8/PA9, Timer B to PA10/PA11, Timer C to PB12/PB13, Timer D to PB14/PB15, and Timer E to PC8/PC9 (verify against your device datasheet and package).
+</Note>
+
+## HRTIM_TimeBaseCfgTypeDef
+
+Configure the time base for each timer unit independently with `HAL_HRTIM_TimeBaseConfig`.
+
+<ParamField path="Period" type="uint32_t" required>
+  Timer period register (PER) value. The counter resets to zero after reaching this value. The output PWM frequency is determined by `HRTIMClock / (PrescalerRatio * Period)`. Valid range: 3 to 65535.
+</ParamField>
+
+<ParamField path="RepetitionCounter" type="uint32_t" default="0">
+  Number of timer period repetitions before an update event fires. Set to 0 to generate an update event on every period. Useful for reducing interrupt rate when multiple carrier cycles are needed per control loop iteration.
+</ParamField>
+
+<ParamField path="PrescalerRatio" type="uint32_t" default="HRTIM_PRESCALERRATIO_DIV1">
+  Divides the HRTIM clock before the counter. `HRTIM_PRESCALERRATIO_DIV1` provides the finest resolution (184 ps at 400 MHz CPU). Higher ratios (`DIV2`, `DIV4`, up to `HRTIM_PRESCALERRATIO_MUL32`) extend the maximum period at the cost of resolution. Select the lowest prescaler that still fits the desired period in the 16-bit counter.
+</ParamField>
+
+<ParamField path="Mode" type="uint32_t" required>
+  Counter operating mode. `HRTIM_MODE_CONTINUOUS` restarts automatically after the period. `HRTIM_MODE_SINGLESHOT` stops the counter after one period. `HRTIM_MODE_SINGLESHOT_RETRIGGERABLE` restarts on an external event while already running.
+</ParamField>
+
+## HRTIM_OutputCfgTypeDef
+
+Configure the behavior of each physical output (e.g., TA1, TA2) using `HAL_HRTIM_WaveformOutputConfig`.
+
+<ParamField path="Polarity" type="uint32_t" default="HRTIM_OUTPUTPOLARITY_HIGH">
+  Active level of the output: `HRTIM_OUTPUTPOLARITY_HIGH` (set event drives high) or `HRTIM_OUTPUTPOLARITY_LOW` (set event drives low).
+</ParamField>
+
+<ParamField path="IdleMode" type="uint32_t" default="HRTIM_OUTPUTIDLEMODE_NONE">
+  Behavior when the timer is idle (not running). `HRTIM_OUTPUTIDLEMODE_NONE` holds the last output state. `HRTIM_OUTPUTIDLEMODE_IDLE` forces the output to `IdleLevel`.
+</ParamField>
+
+<ParamField path="IdleLevel" type="uint32_t" default="HRTIM_OUTPUTIDLELEVEL_INACTIVE">
+  Output level when idle mode is active: `HRTIM_OUTPUTIDLELEVEL_INACTIVE` or `HRTIM_OUTPUTIDLELEVEL_ACTIVE`.
+</ParamField>
+
+<ParamField path="FaultLevel" type="uint32_t" default="HRTIM_OUTPUTFAULTLEVEL_NONE">
+  Output level when a fault event is detected: `HRTIM_OUTPUTFAULTLEVEL_NONE` (no forced level), `HRTIM_OUTPUTFAULTLEVEL_ACTIVE`, or `HRTIM_OUTPUTFAULTLEVEL_INACTIVE`. Faults can be configured to protect power stages from overcurrent.
+</ParamField>
+
+<ParamField path="ChopperModeEnable" type="uint32_t" default="HRTIM_OUTPUTCHOPPERMODE_DISABLED">
+  Enable high-frequency carrier chopping on the output. `HRTIM_OUTPUTCHOPPERMODE_ENABLED` superimposes a burst-mode carrier (used in some gate driver circuits). `HRTIM_OUTPUTCHOPPERMODE_DISABLED` is the default for standard PWM.
+</ParamField>
+
+## Key functions
+
+| Function | Description |
+|---|---|
+| `HAL_HRTIM_Init(hhrtim)` | Initialize HRTIM, enable its clock, and configure DLL calibration. Must be called first. |
+| `HAL_HRTIM_TimeBaseConfig(hhrtim, timer_idx, pTimeBaseCfg)` | Set period, prescaler, and mode for a specific timer unit. `timer_idx` is one of `HRTIM_TIMERINDEX_TIMER_A`..`HRTIM_TIMERINDEX_TIMER_E` or `HRTIM_TIMERINDEX_MASTER`. |
+| `HAL_HRTIM_SimplePWMChannelConfig(hhrtim, timer_idx, pwm_channel, pSimplePWMChannelCfg)` | Configure a PWM channel in simple mode (set on period, clear on compare). |
+| `HAL_HRTIM_SimpleOCChannelConfig(hhrtim, timer_idx, oc_channel, pSimpleOCChannelCfg)` | Configure an output compare channel in simple mode. |
+| `HAL_HRTIM_WaveformOutputConfig(hhrtim, timer_idx, output, pOutputCfg)` | Configure advanced output behavior (polarity, idle level, fault response, chopper). |
+| `HAL_HRTIM_WaveformCompareConfig(hhrtim, timer_idx, compare_unit, pCompareCfg)` | Set the compare value and mode for precise waveform events. |
+| `HAL_HRTIM_SimplePWMStart(hhrtim, timer_idx, pwm_channel)` | Enable PWM output on the specified timer unit and channel. |
+| `HAL_HRTIM_SimplePWMStop(hhrtim, timer_idx, pwm_channel)` | Disable PWM output. |
+| `HAL_HRTIM_WaveformOutputStart(hhrtim, output_toeneable)` | Start one or more outputs simultaneously using a bitmask (e.g., `HRTIM_OUTPUT_TA1 | HRTIM_OUTPUT_TB1`). |
+| `HAL_HRTIM_WaveformOutputStop(hhrtim, output_todisable)` | Stop the specified outputs. |
+| `HAL_HRTIM_DeInit(hhrtim)` | Reset and disable HRTIM. |
+
+## Usage example — multiple PWM outputs
+
+The following example reproduces the pattern from `Projects/NUCLEO-H743ZI/Examples/HRTIM/HRTIM_MultiplePWM`, generating five independent PWM signals with different duty cycles from Timer A through Timer E.
+
+```c main.c
+#define HRTIM_PERIOD   100   /* Counter period (arbitrary units) */
+#define DUTY_TIMA       13   /* ~13% duty cycle */
+#define DUTY_TIMB       26   /* ~26% */
+#define DUTY_TIMC       38   /* ~38% */
+#define DUTY_TIMD       49   /* ~49% */
+#define DUTY_TIME       63   /* ~63% */
+
+HRTIM_HandleTypeDef              hhrtim;
+HRTIM_TimeBaseCfgTypeDef         time_base_cfg;
+HRTIM_SimplePWMChannelCfgTypeDef pwm_ch_cfg;
+
+/* 1. Initialize HRTIM */
+hhrtim.Instance                       = HRTIM1;
+hhrtim.Init.HRTIMInterruptResquests   = HRTIM_IT_NONE;
+hhrtim.Init.SyncOptions               = HRTIM_SYNCOPTION_NONE;
+
+if (HAL_HRTIM_Init(&hhrtim) != HAL_OK)
+{
+    Error_Handler();
+}
+
+/* 2. Common time base: continuous mode, no prescaler */
+time_base_cfg.Mode              = HRTIM_MODE_CONTINUOUS;
+time_base_cfg.Period            = HRTIM_PERIOD;
+time_base_cfg.PrescalerRatio    = HRTIM_PRESCALERRATIO_DIV1;
+time_base_cfg.RepetitionCounter = 0;
+
+/* 3. Configure each timer unit with the same period */
+uint32_t timers[] = {
+    HRTIM_TIMERINDEX_TIMER_A, HRTIM_TIMERINDEX_TIMER_B,
+    HRTIM_TIMERINDEX_TIMER_C, HRTIM_TIMERINDEX_TIMER_D,
+    HRTIM_TIMERINDEX_TIMER_E
+};
+for (int i = 0; i < 5; i++)
+{
+    HAL_HRTIM_TimeBaseConfig(&hhrtim, timers[i], &time_base_cfg);
+}
+
+/* 4. Configure PWM channels with individual duty cycles */
+uint32_t outputs[] = {
+    HRTIM_OUTPUT_TA1, HRTIM_OUTPUT_TB1,
+    HRTIM_OUTPUT_TC1, HRTIM_OUTPUT_TD1,
+    HRTIM_OUTPUT_TE1
+};
+uint32_t pulses[]  = {DUTY_TIMA, DUTY_TIMB, DUTY_TIMC, DUTY_TIMD, DUTY_TIME};
+
+pwm_ch_cfg.IdleLevel = HRTIM_OUTPUTIDLELEVEL_INACTIVE;
+
+for (int i = 0; i < 5; i++)
+{
+    pwm_ch_cfg.Polarity = (i == 3) ? HRTIM_OUTPUTPOLARITY_HIGH
+                                   : HRTIM_OUTPUTPOLARITY_LOW;
+    pwm_ch_cfg.Pulse    = pulses[i];
+    HAL_HRTIM_SimplePWMChannelConfig(&hhrtim, timers[i], outputs[i], &pwm_ch_cfg);
+}
+
+/* 5. Start all five PWM outputs */
+for (int i = 0; i < 5; i++)
+{
+    if (HAL_HRTIM_SimplePWMStart(&hhrtim, timers[i], outputs[i]) != HAL_OK)
+    {
+        Error_Handler();
+    }
+}
+```
+
+## Prescaler and resolution trade-off
+
+| PrescalerRatio | Timer clock | Resolution | Max period at 400 MHz CPU |
+|---|---|---|---|
+| `DIV1` | 4.608 GHz (DLL × 11.52) | 184 ps | ~14 µs |
+| `DIV2` | 2.304 GHz | 368 ps | ~28 µs |
+| `DIV4` | 1.152 GHz | 736 ps | ~56 µs |
+| `MUL32` (÷1/32) | 144 MHz | 6.9 ns | ~455 µs |
+
+<Tip>
+  For power converter switching frequencies above 1 MHz, use `HRTIM_PRESCALERRATIO_DIV1` and keep `Period` small (50–200 counts). For frequencies below 100 kHz, increase the prescaler ratio to keep `Period` in the mid-range of the 16-bit counter for better duty-cycle resolution.
+</Tip>
+
+<Warning>
+  HRTIM outputs are not 5 V tolerant. Do not connect them directly to gate drivers that require 5 V logic levels without level-shifting circuitry.
+</Warning>

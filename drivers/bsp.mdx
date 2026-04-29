@@ -1,0 +1,190 @@
+---
+title: "Board Support Package for STM32H7 boards"
+description: "BSP drivers wrap LEDs, buttons, LCD, touch, audio, SDRAM, and QSPI behind a uniform C API for every official STM32H7 Discovery, Evaluation, and Nucleo board."
+---
+
+The Board Support Package (BSP) layer sits above the HAL and provides ready-to-use, board-specific C APIs for every peripheral that is soldered onto an official STM32H7 board. Rather than reading schematic pin assignments and writing GPIO/I2C/SPI initialisation yourself, you call `BSP_LED_Init()`, `BSP_LCD_Init()`, or `BSP_AUDIO_IN_Init()` and the BSP handles every detail — clock enabling, GPIO alternate-function configuration, DMA wiring, and component-driver initialisation — for the exact revision of hardware you are targeting.
+
+## Supported boards
+
+<AccordionGroup>
+  <Accordion title="STM32H735G-DK — Discovery kit">
+    High-performance Discovery kit based on the STM32H735IGK6. Features an OCTOSPI NOR flash, 4.3" RGB LCD with touch panel (GT911 controller), 16-Mbit PSRAM, USB OTG FS/HS, and an Audio CODEC.
+
+    BSP header: `STM32H735G-DK/stm32h735g_discovery.h`
+  </Accordion>
+  <Accordion title="STM32H743I-EVAL — Evaluation board">
+    Full-featured evaluation board for the STM32H743IIT6. Includes SDRAM, NOR/NAND flash, microSD, LCD (NT35510 + OTM8009A), resistive and capacitive touch, Audio CODEC (WM8994), Ethernet (LAN8742A), Camera connector (OV9655/S5K5CAG), and CAN/LIN headers.
+
+    BSP header: `STM32H743I-EVAL/stm32h743i_eval.h`
+  </Accordion>
+  <Accordion title="STM32H745I-DISCO — Discovery kit (dual-core)">
+    Discovery kit for the dual-core STM32H745XIH6 (Cortex-M7 + Cortex-M4). Provides a 4-inch TFT LCD (RK043FN48H), capacitive touch panel (FT5336), stereo Audio CODEC, SDRAM, QSPI NOR flash, and integrated Wi-Fi (ES-WiFi module).
+
+    BSP header: `STM32H745I-DISCO/stm32h745i_discovery.h`
+  </Accordion>
+  <Accordion title="STM32H747I-DISCO — Discovery kit (dual-core)">
+    Discovery kit for the STM32H747XIH6. Similar peripherals to H745I-DISCO with additions: USB OTG HS in host mode with connector, HDMI-CEC, and a 4" RGB LCD with capacitive touch (FT6X06).
+
+    BSP header: `STM32H747I-DISCO/stm32h747i_discovery.h`
+  </Accordion>
+  <Accordion title="STM32H747I-EVAL — Evaluation board (dual-core)">
+    Evaluation board for the STM32H747XIH6. Includes SDRAM, QSPI NOR, LCD with OTM8009A, Audio CODEC (WM8994), Ethernet (LAN8742A), camera interface, and Arduino-compatible headers.
+
+    BSP header: `STM32H747I-EVAL/stm32h747i_eval.h`
+  </Accordion>
+  <Accordion title="STM32H750B-DK — Discovery kit">
+    Discovery kit for the 128 KB flash STM32H750XBH6, designed for code-in-RAM or external flash (MT25TL01G QSPI). Includes a 2" TFT LCD with touch (FT5336), Audio CODEC, SDRAM, USB OTG FS, and microSD.
+
+    BSP header: `STM32H750B-DK/stm32h750b_discovery.h`
+  </Accordion>
+  <Accordion title="STM32H7B3I-DK — Discovery kit">
+    Discovery kit for the STM32H7B3LIH6Q. Features an OCTOSPI NOR flash, 2" TFT LCD with FT5336 touch, Audio CODEC, USB HS, and a stereo PDM microphone.
+
+    BSP header: `STM32H7B3I-DK/stm32h7b3i_discovery.h`
+  </Accordion>
+  <Accordion title="STM32H7B3I-EVAL — Evaluation board">
+    Evaluation board for the STM32H7B3LIH6Q. Includes SDRAM, QSPI NOR, LCD with NT35510, touch panel, Audio CODEC (WM8994), Ethernet, camera, and CAN FD headers.
+
+    BSP header: `STM32H7B3I-EVAL/stm32h7b3i_eval.h`
+  </Accordion>
+  <Accordion title="STM32H7xx_Nucleo — Nucleo-144">
+    Common BSP for all STM32H7 Nucleo-144 boards (NUCLEO-H743ZI, NUCLEO-H753ZI, NUCLEO-H723ZG, NUCLEO-H745ZI-Q, NUCLEO-H755ZI-Q, NUCLEO-H7A3ZI-Q). Provides three user LEDs (LD1/LD2/LD3), one user button (B1), and the STLINK-V3 virtual COM port.
+
+    BSP header: `STM32H7xx_Nucleo/stm32h7xx_nucleo.h`
+  </Accordion>
+</AccordionGroup>
+
+## BSP function categories
+
+Each board BSP exposes a consistent set of function families. Not every function is available on every board — check the board-specific header for the exact API.
+
+| Category | Typical functions |
+|----------|------------------|
+| **LED** | `BSP_LED_Init`, `BSP_LED_DeInit`, `BSP_LED_On`, `BSP_LED_Off`, `BSP_LED_Toggle` |
+| **Push button** | `BSP_PB_Init`, `BSP_PB_DeInit`, `BSP_PB_GetState` |
+| **LCD** | `BSP_LCD_Init`, `BSP_LCD_DeInit`, `BSP_LCD_DisplayOn`, `BSP_LCD_DrawBitmap` |
+| **Touch screen** | `BSP_TS_Init`, `BSP_TS_DeInit`, `BSP_TS_GetState` |
+| **Audio out** | `BSP_AUDIO_OUT_Init`, `BSP_AUDIO_OUT_Play`, `BSP_AUDIO_OUT_SetVolume` |
+| **Audio in** | `BSP_AUDIO_IN_Init`, `BSP_AUDIO_IN_Record`, `BSP_AUDIO_IN_Stop` |
+| **SDRAM** | `BSP_SDRAM_Init`, `BSP_SDRAM_DeInit`, `BSP_SDRAM_SendCommand` |
+| **NOR/QSPI flash** | `BSP_QSPI_Init`, `BSP_QSPI_Read`, `BSP_QSPI_Write`, `BSP_QSPI_Erase_Block` |
+| **microSD** | `BSP_SD_Init`, `BSP_SD_ReadBlocks`, `BSP_SD_WriteBlocks`, `BSP_SD_GetCardState` |
+| **Camera** | `BSP_CAMERA_Init`, `BSP_CAMERA_Start`, `BSP_CAMERA_Suspend` |
+| **Ethernet PHY** | `BSP_ETH_Init` (via LAN8742A component driver) |
+| **Joystick** | `BSP_JOY_Init`, `BSP_JOY_GetState` |
+
+## LED example
+
+```c
+#include "stm32h7xx_nucleo.h"   /* or the board-specific header */
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    /* Initialise the three user LEDs */
+    BSP_LED_Init(LED1);
+    BSP_LED_Init(LED2);
+    BSP_LED_Init(LED3);
+
+    while (1)
+    {
+        BSP_LED_Toggle(LED1);
+        HAL_Delay(500U);
+    }
+}
+```
+
+`LED1`, `LED2`, and `LED3` are board-specific enum values defined in the BSP header. The underlying GPIO pin and port are resolved at compile time for the selected board.
+
+## Push button example
+
+```c
+#include "stm32h7xx_nucleo.h"
+
+BSP_PB_Init(BUTTON_USER, BUTTON_MODE_GPIO);   /* polling mode */
+
+while (1)
+{
+    if (BSP_PB_GetState(BUTTON_USER) == SET)
+    {
+        /* Button is pressed (active low, internally debounced by BSP) */
+        BSP_LED_Toggle(LED1);
+        HAL_Delay(200U);
+    }
+}
+```
+
+Pass `BUTTON_MODE_EXTI` instead of `BUTTON_MODE_GPIO` to configure the button as an external interrupt. The BSP configures the EXTI line and enables the NVIC; your application provides a callback by overriding `BSP_PB_Callback()`.
+
+## Audio output example
+
+```c
+#include "stm32h743i_eval.h"   /* adjust for your board */
+
+/* Initialise audio out at 44100 Hz, 16-bit, stereo, 80% volume */
+BSP_AUDIO_OUT_Init(0U, OUTPUT_DEVICE_HEADPHONE, 80U, AUDIO_FREQUENCY_44K);
+
+/* Start playback — buffer must remain valid for the duration */
+BSP_AUDIO_OUT_Play((uint16_t *)audio_samples, SAMPLES_SIZE);
+
+/* Implement the half-transfer callback for double buffering */
+void BSP_AUDIO_OUT_HalfTransfer_CallBack(uint32_t Instance)
+{
+    /* Refill first half of DMA audio buffer */
+}
+
+void BSP_AUDIO_OUT_TransferComplete_CallBack(uint32_t Instance)
+{
+    /* Refill second half of DMA audio buffer */
+}
+```
+
+The `BSP_AUDIO_OUT_*` functions configure the SAI peripheral, I2S clock, and the on-board CODEC (WM8994 on EVAL boards, CS42L51 on Discovery kits) via I2C.
+
+## BSP component drivers
+
+The `Drivers/BSP/Components/` directory contains individual drivers for every IC that appears on at least one official board. These are used internally by the board BSP files; you rarely call them directly.
+
+| Component | Type | Used on |
+|-----------|------|---------|
+| `wm8994` | Audio CODEC | H743I-EVAL, H747I-DISCO, H747I-EVAL, H7B3I-EVAL |
+| `cs42l51` | Audio CODEC | H750B-DK |
+| `otm8009a` | LCD controller (MIPI-DSI) | H743I-EVAL, H747I-EVAL |
+| `nt35510` | LCD controller (FSMC) | H743I-EVAL, H7B3I-EVAL |
+| `ft5336` | Capacitive touch (I2C) | H745I-DISCO, H750B-DK, H7B3I-DK |
+| `ft6x06` | Capacitive touch (I2C) | H747I-DISCO |
+| `gt911` | Capacitive touch (I2C) | H735G-DK |
+| `lan8742` | Ethernet PHY | H743I-EVAL, H747I-EVAL, H7B3I-EVAL |
+| `mt25tl01g` | QSPI NOR flash (dual-die) | H750B-DK, H747I-DISCO |
+| `mx25lm51245g` | OCTOSPI NOR flash | H735G-DK, H7B3I-DK |
+| `is42s32800j` | SDRAM | H743I-EVAL |
+| `s70kl1281` | HyperRAM | H7B3I-DK |
+| `ov9655` | Camera sensor | H743I-EVAL |
+
+## BSP error codes
+
+All BSP functions return an `int32_t` error code:
+
+```c
+#define BSP_ERROR_NONE                 0
+#define BSP_ERROR_NO_INIT             -1
+#define BSP_ERROR_WRONG_PARAM         -2
+#define BSP_ERROR_BUSY                -3
+#define BSP_ERROR_PERIPH_FAILURE      -4
+#define BSP_ERROR_COMPONENT_FAILURE   -5
+#define BSP_ERROR_UNKNOWN_FAILURE     -6
+#define BSP_ERROR_UNKNOWN_COMPONENT   -7
+#define BSP_ERROR_BUS_FAILURE         -8
+#define BSP_ERROR_CLOCK_FAILURE       -9
+#define BSP_ERROR_MSP_FAILURE        -10
+#define BSP_ERROR_FEATURE_NOT_SUPPORTED -11
+```
+
+Always check the return value of `BSP_*_Init()` calls — a negative return means the component was not found or the I2C bus did not respond, which typically indicates a board revision mismatch or a missing hardware population option.
+
+<Warning>
+  BSP drivers are reference implementations tuned for the exact board revision on which they were validated. Before porting a BSP to a custom board, verify every GPIO assignment, clock frequency, and I2C/SPI address against your own schematic. Reuse the component drivers directly rather than copying the full BSP.
+</Warning>

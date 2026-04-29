@@ -1,0 +1,223 @@
+---
+title: "CMSIS Core and Device support for STM32H7"
+description: "CMSIS v5.9.0 bundles Core(M/A), DSP v1.10.0, NN v3.1.0, RTOS2, and DAP headers for all STM32H7 targets, including the dual-core H745/H747/H755/H757 lines."
+---
+
+STM32CubeH7 ships CMSIS 5.9.0 as the portable foundation beneath every HAL and LL driver. It supplies the core-peripheral access layer for the Cortex-M7 primary core and the Cortex-M4 secondary core found on dual-core devices, plus the DSP and neural-network libraries that exploit the Cortex-M7's single- and double-precision FPU and optional Helium extensions.
+
+## Component overview
+
+<CardGroup cols={2}>
+  <Card title="Core(M)" icon="cpu">
+    Cortex-M0/M0+/M3/M4/M7/M33/M55/M85 peripheral access layer (`core_cm7.h`, `core_cm4.h`)
+  </Card>
+  <Card title="Core(A)" icon="cpu">
+    Cortex-A5/A7/A9 peripheral access layer (`core_ca.h`) for heterogeneous designs
+  </Card>
+  <Card title="DSP" icon="wave-square">
+    Signal-processing library v1.10.0 — FFT, FIR, IIR, matrix, statistics (`arm_math.h`)
+  </Card>
+  <Card title="NN" icon="brain">
+    Neural-network kernel library v3.1.0 — convolutions, pooling, fully-connected, softmax
+  </Card>
+  <Card title="RTOS2" icon="clock">
+    RTOS API v2.1.3 (`cmsis_os2.h`) — threads, mutexes, semaphores, message queues
+  </Card>
+  <Card title="DAP" icon="usb">
+    Debug Access Port firmware for USB-JTAG/SWD probes
+  </Card>
+</CardGroup>
+
+## Header layout
+
+```
+Drivers/CMSIS/
+├── Include/               # Flat copy of Core(M) headers for legacy projects
+│   ├── core_cm7.h         # Cortex-M7 core peripheral access layer (v5.1.6)
+│   ├── core_cm4.h         # Cortex-M4 core peripheral access layer (v5.1.2)
+│   ├── cmsis_version.h    # __CM_CMSIS_VERSION_MAIN 5, __CM_CMSIS_VERSION_SUB 6
+│   ├── mpu_armv7.h        # ARMv7-M MPU API
+│   └── cmsis_compiler.h   # Cross-compiler abstraction (__INLINE, __STATIC_FORCEINLINE, …)
+├── Core/Include/          # Canonical Core(M) headers (same content, authoritative copy)
+├── Core_A/Include/        # Cortex-A headers (core_ca.h, irq_ctrl.h, cmsis_cp15.h)
+├── Device/ST/STM32H7xx/   # STM32H7xx device headers, startup files, system_stm32h7xx.c
+├── DSP/Include/           # arm_math.h, arm_math_types.h, arm_common_tables.h, …
+├── NN/Include/            # arm_nnfunctions.h, arm_nn_types.h, arm_nnsupportfunctions.h
+├── RTOS/                  # CMSIS-RTOS v1 shim
+└── RTOS2/Include/         # cmsis_os2.h, os_tick.h
+```
+
+<Note>
+  The `Include/` flat directory exists so that legacy projects that reference `#include "core_cm7.h"` without a subpath continue to compile without modification. New projects should prefer `Core/Include/core_cm7.h`.
+</Note>
+
+## Including CMSIS headers
+
+For the primary Cortex-M7 core on every STM32H7 device, include the device-level header directly — it pulls in `core_cm7.h` automatically:
+
+```c
+/* Preferred: include the device header; it includes core_cm7.h for you */
+#include "stm32h7xx.h"
+
+/* Direct include when working outside the HAL/LL framework */
+#include "core_cm7.h"
+```
+
+On dual-core STM32H745/H747/H755/H757 devices the Cortex-M4 firmware project uses:
+
+```c
+/* CM4 project — defined by the IDE/Makefile as CORE_CM4 */
+#include "stm32h7xx.h"   /* resolves to core_cm4.h via device header */
+
+/* Or directly */
+#include "core_cm4.h"
+```
+
+The preprocessor symbols `CORE_CM7` and `CORE_CM4` select the correct branch inside `stm32h7xx.h`. Your toolchain project file or `Makefile` must define exactly one of them.
+
+## Version macros
+
+```c
+#include "cmsis_version.h"
+
+/* CMSIS Core(M) version bundled in STM32CubeH7 v1.13.0 */
+/* __CM_CMSIS_VERSION_MAIN == 5  */
+/* __CM_CMSIS_VERSION_SUB  == 6  */
+/* __CM_CMSIS_VERSION      == 0x00050006 */
+
+uint32_t ver = __CM_CMSIS_VERSION;   /* 0x00050006 */
+```
+
+## SystemCoreClockUpdate
+
+`SystemCoreClockUpdate()` is declared in `system_stm32h7xx.h` and implemented in `system_stm32h7xx.c` (inside `Device/ST/STM32H7xx/Source/`). Call it after any PLL reconfiguration to keep the global `SystemCoreClock` variable accurate:
+
+```c
+#include "stm32h7xx.h"
+
+/* After HAL_RCC_ClockConfig() or a manual PLL change */
+SystemCoreClockUpdate();
+
+/* SystemCoreClock now reflects the true CPU frequency in Hz */
+uint32_t cpu_hz = SystemCoreClock;  /* e.g. 480000000 on H743 at max speed */
+```
+
+## NVIC functions
+
+`core_cm7.h` provides inline wrappers for every NVIC register operation:
+
+```c
+#include "core_cm7.h"
+
+/* Enable USART3 global interrupt at priority 5 */
+NVIC_SetPriority(USART3_IRQn, 5U);
+NVIC_EnableIRQ(USART3_IRQn);
+
+/* Trigger a software interrupt (useful in unit tests) */
+NVIC_SetPendingIRQ(USART3_IRQn);
+
+/* Disable and clear */
+NVIC_DisableIRQ(USART3_IRQn);
+NVIC_ClearPendingIRQ(USART3_IRQn);
+
+/* Read current priority */
+uint32_t prio = NVIC_GetPriority(USART3_IRQn);
+```
+
+## MPU configuration
+
+`mpu_armv7.h` exposes the ARMv7-M MPU API used to protect SRAM and peripheral regions. The STM32H7 has 16 MPU regions on the M7 core:
+
+```c
+#include "mpu_armv7.h"
+
+/* Disable MPU, configure a region, then re-enable */
+ARM_MPU_Disable();
+
+ARM_MPU_SetRegionEx(
+  0U,                               /* region number 0 */
+  0x24000000U,                      /* base address: AXI SRAM */
+  ARM_MPU_RASR(
+    0U,                             /* Execute Never = 0 (allow code) */
+    ARM_MPU_AP_FULL,                /* full access */
+    0U,                             /* TEX = 0 */
+    1U,                             /* Shareable */
+    1U,                             /* Cacheable */
+    0U,                             /* Bufferable */
+    0x00U,                          /* sub-region disable */
+    ARM_MPU_REGION_SIZE_512KB       /* 512 KB */
+  )
+);
+
+ARM_MPU_Enable(MPU_CTRL_PRIVDEFENA_Msk);
+```
+
+## CMSIS-DSP
+
+Include `arm_math.h` and link one of the pre-built `.a` libraries from `DSP/`:
+
+```c
+#define ARM_MATH_CM7          /* target core selection */
+#define __FPU_PRESENT  1U
+#include "arm_math.h"
+
+/* Compute a 1024-point real FFT */
+arm_rfft_fast_instance_f32 fft;
+arm_rfft_fast_init_f32(&fft, 1024U);
+
+float32_t input[1024];
+float32_t output[1024];
+arm_rfft_fast_f32(&fft, input, output, 0U);  /* 0 = forward transform */
+```
+
+The library version bundled in STM32CubeH7 v1.13.0 is **CMSIS-DSP v1.10.0**.
+
+## CMSIS-NN
+
+CMSIS-NN v3.1.0 provides TFLite-Micro-compatible int8/int16 kernels optimised for Cortex-M DSP extensions:
+
+```c
+#include "arm_nnfunctions.h"
+#include "arm_nn_types.h"
+
+/* Example: s8 convolution wrapper (TFLite-micro compliant) */
+cmsis_nn_context ctx;
+cmsis_nn_conv_params conv_params;
+conv_params.padding.w    = 1;
+conv_params.padding.h    = 1;
+conv_params.stride.w     = 1;
+conv_params.stride.h     = 1;
+conv_params.dilation.w   = 1;
+conv_params.dilation.h   = 1;
+conv_params.input_offset  = 128;
+conv_params.output_offset = -128;
+conv_params.activation.min = -128;
+conv_params.activation.max =  127;
+
+arm_cmsis_nn_status status = arm_convolve_wrapper_s8(
+    &ctx, &conv_params, &quant_params,
+    &input_dims, input_data,
+    &filter_dims, filter_data,
+    &bias_dims, bias_data,
+    &output_dims, output_data
+);
+```
+
+<Tip>
+  Build CMSIS-NN as a static library targeting `cortex-m7` to benefit from DSP-extension optimisations. Avoid `-ffreestanding` and `-fno-builtin` — they disable `memcpy`/`memset` intrinsics that the kernels rely on heavily.
+</Tip>
+
+## CMSIS-RTOS2
+
+```c
+#include "cmsis_os2.h"
+
+/* Create a thread */
+const osThreadAttr_t led_attr = { .name = "LED", .stack_size = 256 };
+osThreadId_t led_id = osThreadNew(led_task, NULL, &led_attr);
+
+/* Start the RTOS scheduler (does not return) */
+osKernelStart();
+```
+
+`cmsis_os2.h` is located in `RTOS2/Include/`. The underlying RTX5 implementation shipped by ST is version **5.5.4**.

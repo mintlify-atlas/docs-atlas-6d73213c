@@ -1,0 +1,57 @@
+---
+title: "Security policy and vulnerability reporting"
+description: "How to report potential security vulnerabilities in STM32CubeH7 to ST's PSIRT, plus the SW Security Level classification and important security notices."
+---
+
+STMicroelectronics places a high priority on security. The Product Security Incident Response Team (PSIRT) is dedicated to rapidly addressing potential security vulnerabilities affecting ST products, drawing on deep experience to provide clear analyses and guidance on mitigations and solutions.
+
+## Reporting a vulnerability
+
+<Warning>
+  Do not report security vulnerabilities through public GitHub issues. Public disclosure before a fix is available can put other users at risk.
+</Warning>
+
+If you discover a potential security vulnerability in STM32CubeH7 or any other ST product, report it through the official ST PSIRT channel:
+
+**[https://www.st.com/content/st_com/en/security/report-vulnerabilities.html](https://www.st.com/content/st_com/en/security/report-vulnerabilities.html)**
+
+### What happens when you submit a report
+
+By submitting a report to ST PSIRT, you agree to the following terms:
+
+- You confirm that you have the right to submit the report.
+- You grant ST the rights to use the report for security vulnerability analysis, testing, correction, patching, and reporting.
+- ST's [Privacy Policy](https://www.st.com/content/st_com/en/common/privacy-portal.html) applies to all related communications.
+
+ST takes all potential vulnerability reports seriously and will review the submission to determine appropriate actions.
+
+## SW security classification
+
+STM32CubeH7 is classified under the [STM32Trust software security policies](https://wiki.st.com/stm32mcu/wiki/Security:STM32Trust_software_security_policies), which define four levels of SW security classification. Each level specifies a set of security policies for the applicable software.
+
+| Software | SW security level |
+|---|---|
+| STM32CubeH7 | Low |
+
+The STM32Trust framework defines what security policies apply at each classification level. You can review the full level definitions on the ST wiki page linked above.
+
+## Important security notice
+
+<Info>
+  The following notice applies to all use of STM32CubeH7 software in customer products.
+</Info>
+
+ST products may be certified by security certification bodies such as Platform Security Architecture ([psacertified.org](https://www.psacertified.org)) and/or Security Evaluation standard for IoT Platforms ([trustcb.com](https://www.trustcb.com)). Certification status can change over time — always verify current status on the relevant certification standards website or on the product page at st.com.
+
+Key points to consider when using STM32CubeH7 in a product:
+
+- **Customer responsibility**: Each customer must determine whether the security level of an ST product meets their requirements, both for the ST component alone and in combination with other components and software in the end product.
+- **Cryptographic algorithms**: Industry-standard algorithms such as AES, DES, or MD5 that may be used alongside STM32CubeH7 are based on open standards not developed by ST. ST does not take responsibility for flaws in those algorithms or for methods developed to bypass them.
+- **Scope of certification**: No level of certification can guarantee protection against all attacks, including advanced attacks, novel attack forms, or attacks targeting use outside the product's specification. ST is not responsible for resistance against such attacks.
+- **"AS IS" basis**: All security features of ST products, including documentation, are provided on an "AS IS" basis. ST disclaims all warranties, express or implied, to the extent permitted by applicable law.
+
+## Scope of this policy
+
+This security policy covers STM32CubeH7 firmware and software as provided in this repository. For hardware-level security features of individual STM32H7 microcontrollers, refer to the device reference manual and datasheet available on [st.com](https://www.st.com/en/microcontrollers-microprocessors/stm32h7-series.html).
+
+For issues that are not security vulnerabilities, see the [contributing guide](/resources/contributing) for instructions on how to open a bug report or submit a pull request.

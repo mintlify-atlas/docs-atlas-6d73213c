@@ -1,0 +1,299 @@
+---
+title: "HAL UART/USART driver — serial communication"
+description: "Complete reference for the STM32H7 HAL UART/USART driver: initialization, polling, interrupt, and DMA transfer modes with callback documentation."
+---
+
+The STM32H7 HAL UART driver wraps the USART hardware peripheral in an asynchronous configuration and exposes a uniform API across polling, interrupt, and DMA transfer modes. All USART instances (USART1–USART6, UART4, UART5, UART7, UART8) share this API. LPUART1, clocked from the D3 domain, is also supported and uses the same `UART_HandleTypeDef` handle.
+
+<Note>
+LPUART1 is the only UART instance that can wake the MCU from Stop mode. Use `HAL_UARTEx_EnableStopMode` to configure it.
+</Note>
+
+## UART_InitTypeDef
+
+Populate `UART_HandleTypeDef.Init` before calling `HAL_UART_Init`.
+
+<ParamField path="Init.BaudRate" type="uint32_t" required>
+  Baud rate in bits per second (e.g., `9600`, `115200`, `921600`). The driver computes the BRR register value from this field and the peripheral clock.
+</ParamField>
+
+<ParamField path="Init.WordLength" type="uint32_t" required>
+  Data frame width. Use `UART_WORDLENGTH_7B`, `UART_WORDLENGTH_8B` (default), or `UART_WORDLENGTH_9B`. When parity is enabled, the parity bit occupies the MSB, so effective payload is one bit shorter.
+</ParamField>
+
+<ParamField path="Init.StopBits" type="uint32_t" required>
+  Number of stop bits: `UART_STOPBITS_0_5`, `UART_STOPBITS_1` (default), `UART_STOPBITS_1_5`, or `UART_STOPBITS_2`.
+</ParamField>
+
+<ParamField path="Init.Parity" type="uint32_t" required>
+  Parity scheme: `UART_PARITY_NONE` (default), `UART_PARITY_EVEN`, or `UART_PARITY_ODD`.
+</ParamField>
+
+<ParamField path="Init.Mode" type="uint32_t" required>
+  Enable TX, RX, or both: `UART_MODE_TX`, `UART_MODE_RX`, or `UART_MODE_TX_RX`.
+</ParamField>
+
+<ParamField path="Init.HwFlowCtl" type="uint32_t" required>
+  Hardware flow control: `UART_HWCONTROL_NONE` (default), `UART_HWCONTROL_RTS`, `UART_HWCONTROL_CTS`, or `UART_HWCONTROL_RTS_CTS`.
+</ParamField>
+
+<ParamField path="Init.OverSampling" type="uint32_t" required>
+  Oversampling ratio: `UART_OVERSAMPLING_16` (default, better noise immunity) or `UART_OVERSAMPLING_8` (allows higher baud rates at a given clock).
+</ParamField>
+
+## Initialization
+
+### HAL_UART_Init
+
+```c
+HAL_StatusTypeDef HAL_UART_Init(UART_HandleTypeDef *huart);
+```
+
+Configures the UART peripheral according to `huart->Init`, calls `HAL_UART_MspInit` for GPIO and clock setup, and leaves the peripheral in the ready state. Returns `HAL_OK` on success.
+
+### HAL_UART_DeInit
+
+```c
+HAL_StatusTypeDef HAL_UART_DeInit(UART_HandleTypeDef *huart);
+```
+
+Resets the peripheral, disables clocks, and calls `HAL_UART_MspDeInit`. Call before re-initializing with new parameters.
+
+**Minimal init sequence:**
+
+```c
+UART_HandleTypeDef huart3;
+
+huart3.Instance          = USART3;
+huart3.Init.BaudRate     = 115200;
+huart3.Init.WordLength   = UART_WORDLENGTH_8B;
+huart3.Init.StopBits     = UART_STOPBITS_1;
+huart3.Init.Parity       = UART_PARITY_NONE;
+huart3.Init.Mode         = UART_MODE_TX_RX;
+huart3.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+
+HAL_UART_DeInit(&huart3);
+HAL_UART_Init(&huart3);
+```
+
+## Transfer functions
+
+<Tabs>
+  <Tab title="Polling">
+    Polling transfers block until the transfer completes or the timeout expires. Use for simple, low-throughput scenarios where the CPU can afford to wait.
+
+    ### HAL_UART_Transmit
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef *huart,
+                                        const uint8_t *pData,
+                                        uint16_t Size,
+                                        uint32_t Timeout);
+    ```
+
+    Sends `Size` bytes from `pData`. Returns `HAL_OK`, `HAL_TIMEOUT`, or `HAL_ERROR`.
+
+    ### HAL_UART_Receive
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef *huart,
+                                       uint8_t *pData,
+                                       uint16_t Size,
+                                       uint32_t Timeout);
+    ```
+
+    Blocks until `Size` bytes are received or `Timeout` milliseconds elapse.
+
+    ```c
+    uint8_t tx[] = "Hello UART\r\n";
+    uint8_t rx[12];
+
+    /* Transmit then receive with 5 s timeout each */
+    if (HAL_UART_Transmit(&huart3, tx, sizeof(tx) - 1, 5000) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    if (HAL_UART_Receive(&huart3, rx, sizeof(rx), 5000) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    ```
+  </Tab>
+
+  <Tab title="Interrupt">
+    Interrupt-driven transfers return immediately. The peripheral raises an interrupt when the transfer completes and the HAL calls the appropriate callback.
+
+    ### HAL_UART_Transmit_IT
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *huart,
+                                           const uint8_t *pData,
+                                           uint16_t Size);
+    ```
+
+    Starts a non-blocking transmit. `pData` must remain valid until `HAL_UART_TxCpltCallback` fires.
+
+    ### HAL_UART_Receive_IT
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Receive_IT(UART_HandleTypeDef *huart,
+                                          uint8_t *pData,
+                                          uint16_t Size);
+    ```
+
+    Arms the receiver for `Size` bytes. Triggers `HAL_UART_RxCpltCallback` on completion.
+
+    ### HAL_UART_IRQHandler
+
+    ```c
+    void HAL_UART_IRQHandler(UART_HandleTypeDef *huart);
+    ```
+
+    Call from the USARTx IRQ handler. Drives the internal state machine and invokes callbacks.
+
+    ```c
+    /* In stm32h7xx_it.c */
+    void USART3_IRQHandler(void)
+    {
+      HAL_UART_IRQHandler(&huart3);
+    }
+
+    /* In main.c — start a non-blocking receive */
+    uint8_t rxBuf[64];
+    HAL_UART_Receive_IT(&huart3, rxBuf, sizeof(rxBuf));
+
+    /* Callback fires when all 64 bytes arrive */
+    void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+    {
+      if (huart->Instance == USART3)
+      {
+        /* Process rxBuf, then re-arm */
+        HAL_UART_Receive_IT(huart, rxBuf, sizeof(rxBuf));
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="DMA">
+    DMA transfers offload the byte-copy work from the CPU entirely. The DMA controller raises an interrupt on completion and the HAL calls the callback. Required for high-throughput applications.
+
+    ### HAL_UART_Transmit_DMA
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Transmit_DMA(UART_HandleTypeDef *huart,
+                                            const uint8_t *pData,
+                                            uint16_t Size);
+    ```
+
+    ### HAL_UART_Receive_DMA
+
+    ```c
+    HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef *huart,
+                                           uint8_t *pData,
+                                           uint16_t Size);
+    ```
+
+    <Warning>
+    On STM32H7, DMA buffers must reside in DMA-accessible memory (AXI SRAM, SRAM1/2, not TCM). Place buffers in a section backed by AXI SRAM or use the `__attribute__((section(".dma_buffer")))` technique described in AN5361.
+    </Warning>
+
+    ```c
+    /* DMA RX buffer — must be in AXI SRAM, not DTCM */
+    #if defined ( __GNUC__ )
+    __attribute__((section(".dma_buffer")))
+    #endif
+    uint8_t dmaRxBuf[256];
+
+    /* Start DMA-backed receive */
+    HAL_UART_Receive_DMA(&huart3, dmaRxBuf, sizeof(dmaRxBuf));
+
+    /* Completion callback */
+    void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+    {
+      if (huart->Instance == USART3)
+      {
+        /* Full buffer received — process data */
+      }
+    }
+
+    /* Half-transfer callback fires at 128 bytes for double-buffering */
+    void HAL_UART_RxHalfCpltCallback(UART_HandleTypeDef *huart)
+    {
+      /* Process first half of dmaRxBuf while second half fills */
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Callbacks
+
+Override these weak functions in your application. Do not call them directly.
+
+### HAL_UART_TxCpltCallback
+
+```c
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
+```
+
+Invoked when a non-blocking transmit (IT or DMA) completes. The transmit buffer is safe to reuse after this callback returns.
+
+### HAL_UART_RxCpltCallback
+
+```c
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+```
+
+Invoked when the full requested number of bytes have been received. Re-arm reception by calling `HAL_UART_Receive_IT` or `HAL_UART_Receive_DMA` again.
+
+### HAL_UART_ErrorCallback
+
+```c
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
+```
+
+Invoked on framing, parity, noise, or overrun errors. Inspect `huart->ErrorCode` for the specific fault:
+
+| Constant | Meaning |
+|---|---|
+| `HAL_UART_ERROR_PE` | Parity error |
+| `HAL_UART_ERROR_NE` | Noise error |
+| `HAL_UART_ERROR_FE` | Framing error |
+| `HAL_UART_ERROR_ORE` | Overrun error |
+| `HAL_UART_ERROR_DMA` | DMA transfer error |
+
+## Return values
+
+All transfer functions return `HAL_StatusTypeDef`:
+
+| Value | Meaning |
+|---|---|
+| `HAL_OK` | Transfer succeeded |
+| `HAL_ERROR` | Parameter or state error |
+| `HAL_BUSY` | Peripheral already in use |
+| `HAL_TIMEOUT` | Polling timeout expired |
+
+## LPUART1 on STM32H7
+
+LPUART1 is clocked from the D3 domain and remains active in Stop and Standby modes. Its clock source is selected via `RCC_PERIPHCLK_LPUART1` using `HAL_RCCEx_PeriphCLKConfig`. The maximum baud rate is limited by the peripheral clock divided by 3.
+
+```c
+/* Configure LPUART1 at 9600 baud from LSE (32768 Hz) in low-power mode */
+RCC_PeriphCLKInitTypeDef clk = {0};
+clk.PeriphClockSelection   = RCC_PERIPHCLK_LPUART1;
+clk.Lpuart1ClockSelection  = RCC_LPUART1CLKSOURCE_LSE;
+HAL_RCCEx_PeriphCLKConfig(&clk);
+
+hlpuart1.Instance        = LPUART1;
+hlpuart1.Init.BaudRate   = 9600;
+hlpuart1.Init.WordLength = UART_WORDLENGTH_8B;
+hlpuart1.Init.StopBits   = UART_STOPBITS_1;
+hlpuart1.Init.Parity     = UART_PARITY_NONE;
+hlpuart1.Init.Mode       = UART_MODE_TX_RX;
+hlpuart1.Init.HwFlowCtl  = UART_HWCONTROL_NONE;
+HAL_UART_Init(&hlpuart1);
+
+/* Enable autonomous wakeup from Stop mode */
+HAL_UARTEx_EnableStopMode(&hlpuart1);
+```

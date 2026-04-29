@@ -1,0 +1,171 @@
+---
+title: "HAL DAC driver — digital-to-analog conversion API"
+description: "Generate analog voltages with DAC1 and DAC2 on STM32H7 using software triggers, timer-driven DMA waveforms, and the 12-bit HAL DAC driver."
+---
+
+The STM32H7 integrates two DAC instances — DAC1 and DAC2 — each providing two independent 12-bit output channels. The outputs can drive external loads directly when the output buffer is enabled, or connect to on-chip peripherals such as OPAMP and COMP without consuming an external pin. Timer-triggered DMA transfers are the standard approach for continuous waveform generation (sine, sawtooth, or arbitrary shapes) at precise, jitter-free sample rates.
+
+<Note>
+  DAC1 channels 1 and 2 map to PA4 and PA5. DAC2 channels 1 and 2 map to PA6 and PA7 on most STM32H7 pinouts. Consult the datasheet alternate function table for your specific package.
+</Note>
+
+## DAC_InitTypeDef
+
+`DAC_InitTypeDef` has no configurable fields; the structure exists for future extensibility. Pass a zeroed or default-initialized instance to `HAL_DAC_Init`.
+
+```c
+DAC_HandleTypeDef hdac1;
+hdac1.Instance = DAC1;
+HAL_DAC_Init(&hdac1);
+```
+
+## DAC_ChannelConfTypeDef
+
+Configure per-channel behavior with `DAC_ChannelConfTypeDef`, then apply it with `HAL_DAC_ConfigChannel`.
+
+<ParamField path="DAC_Trigger" type="uint32_t" required>
+  Trigger source that latches the data-holding register into the output register. Use `DAC_TRIGGER_NONE` to update the output immediately when `HAL_DAC_SetValue` is called. Use `DAC_TRIGGER_T6_TRGO`, `DAC_TRIGGER_T7_TRGO`, or any other `DAC_TRIGGER_T*_TRGO` constant to synchronize sample updates with a timer's TRGO event. Use `DAC_TRIGGER_SOFTWARE` to update on demand via `HAL_DAC_SetValue`.
+</ParamField>
+
+<ParamField path="DAC_OutputBuffer" type="uint32_t" default="DAC_OUTPUTBUFFER_ENABLE">
+  Controls the on-chip output buffer. `DAC_OUTPUTBUFFER_ENABLE` allows the DAC to drive low-impedance loads directly and is required when connecting to an external pin. `DAC_OUTPUTBUFFER_DISABLE` reduces output swing by a few millivolts but improves linearity near the supply rails — use this when connecting to a high-impedance input or when the on-chip OPAMP buffers the signal.
+</ParamField>
+
+<ParamField path="DAC_ConnectOnChipPeripheral" type="uint32_t" default="DAC_CHIPCONNECT_DISABLE">
+  Routes the DAC output to an on-chip peripheral (OPAMP or COMP) without consuming the GPIO pin. `DAC_CHIPCONNECT_ENABLE` connects the output internally. `DAC_CHIPCONNECT_DISABLE` (default) drives the external GPIO pin.
+</ParamField>
+
+<ParamField path="DAC_UserTrimming" type="uint32_t" default="DAC_TRIMMING_FACTORY">
+  Selects offset calibration source. `DAC_TRIMMING_FACTORY` uses the factory-programmed trim values. `DAC_TRIMMING_USER` allows the application to supply custom trim values via `DAC_SampleAndHoldConfTypeDef` for improved accuracy.
+</ParamField>
+
+## Key functions
+
+| Function | Description |
+|---|---|
+| `HAL_DAC_Init(hdac)` | Initialize the DAC peripheral and enable its clock. |
+| `HAL_DAC_ConfigChannel(hdac, sConfig, channel)` | Apply `DAC_ChannelConfTypeDef` to `DAC_CHANNEL_1` or `DAC_CHANNEL_2`. |
+| `HAL_DAC_Start(hdac, channel)` | Enable the DAC output. The channel must be configured first. |
+| `HAL_DAC_Stop(hdac, channel)` | Disable the DAC output and put the channel in low-power state. |
+| `HAL_DAC_SetValue(hdac, channel, alignment, data)` | Write a conversion value. `alignment` selects the data register: `DAC_ALIGN_8B_R`, `DAC_ALIGN_12B_R`, or `DAC_ALIGN_12B_L`. |
+| `HAL_DAC_GetValue(hdac, channel)` | Read the current output register value. Returns `uint32_t`. |
+| `HAL_DAC_Start_DMA(hdac, channel, pData, length, alignment)` | Start circular DMA transfers from a sample buffer to the DAC output register. |
+| `HAL_DAC_Stop_DMA(hdac, channel)` | Stop DMA-driven output and disable the DAC channel. |
+| `HAL_DAC_ConvCpltCallbackCh1(hdac)` | Weak callback invoked when the DMA transfer for channel 1 completes (or each half in circular mode). |
+| `HAL_DAC_ConvCpltCallbackCh2(hdac)` | Same callback for channel 2. |
+| `HAL_DACEx_TriangleWaveGenerate(hdac, channel, amplitude)` | Enable the hardware triangle wave generator on the selected channel. |
+| `HAL_DACEx_NoiseWaveGenerate(hdac, channel, amplitude)` | Enable the pseudo-random noise generator. |
+
+## Usage examples
+
+<Tabs>
+  <Tab title="Single value output">
+    The simplest use: write a constant voltage to a DAC output pin.
+
+    ```c main.c
+    DAC_HandleTypeDef    hdac1;
+    DAC_ChannelConfTypeDef sConfig = {0};
+
+    /* 1. Initialize DAC1 */
+    hdac1.Instance = DAC1;
+    if (HAL_DAC_Init(&hdac1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 2. Configure channel 1: no trigger, output buffer enabled */
+    sConfig.DAC_Trigger                = DAC_TRIGGER_NONE;
+    sConfig.DAC_OutputBuffer           = DAC_OUTPUTBUFFER_ENABLE;
+    sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_DISABLE;
+    sConfig.DAC_UserTrimming           = DAC_TRIMMING_FACTORY;
+
+    if (HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 3. Set output to full scale (0xFF for 8-bit, ~3.3 V) */
+    if (HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_1, DAC_ALIGN_8B_R, 0xFF) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 4. Enable the output */
+    if (HAL_DAC_Start(&hdac1, DAC_CHANNEL_1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    ```
+  </Tab>
+  <Tab title="DMA waveform (8-bit)">
+    Use TIM6 as the sample clock and DMA to stream a waveform table to the DAC at a precise sample rate.
+
+    ```c main.c
+    /* Six-step escalator waveform at 8-bit right-aligned */
+    const uint8_t sine_table[6] = {0x00, 0x33, 0x66, 0x99, 0xCC, 0xFF};
+
+    DAC_HandleTypeDef      hdac1;
+    DAC_ChannelConfTypeDef sConfig = {0};
+
+    hdac1.Instance = DAC1;
+    HAL_DAC_Init(&hdac1);
+
+    /* Trigger from TIM6 TRGO — TIM6 must be started separately */
+    sConfig.DAC_Trigger      = DAC_TRIGGER_T6_TRGO;
+    sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+
+    HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1);
+
+    /* Start circular DMA: HAL reloads from sine_table on each TIM6 trigger */
+    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1,
+                      (uint32_t *)sine_table,
+                      6,
+                      DAC_ALIGN_8B_R);
+    ```
+
+    <Warning>
+      The DMA buffer must reside in non-cacheable memory or you must call `SCB_CleanDCache_by_Addr` before enabling DMA. On STM32H7, D1 SRAM is cacheable by default.
+    </Warning>
+  </Tab>
+  <Tab title="DMA waveform (12-bit)">
+    For higher-resolution output, use 12-bit right-aligned data with a sample buffer of `uint16_t`.
+
+    ```c main.c
+    /* 12-bit sawtooth: 0 to 4095 in 8 steps */
+    const uint16_t sawtooth[8] = {
+        0x000, 0x24A, 0x492, 0x6DC,
+        0x924, 0xB6E, 0xDB6, 0xFFF
+    };
+
+    DAC_HandleTypeDef      hdac1;
+    DAC_ChannelConfTypeDef sConfig = {0};
+
+    hdac1.Instance = DAC1;
+    HAL_DAC_Init(&hdac1);
+
+    sConfig.DAC_Trigger      = DAC_TRIGGER_T6_TRGO;
+    sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
+
+    HAL_DAC_ConfigChannel(&hdac1, &sConfig, DAC_CHANNEL_1);
+
+    HAL_DAC_Start_DMA(&hdac1, DAC_CHANNEL_1,
+                      (uint32_t *)sawtooth,
+                      8,
+                      DAC_ALIGN_12B_R);
+    ```
+  </Tab>
+</Tabs>
+
+## Data alignment options
+
+The `alignment` parameter of `HAL_DAC_SetValue` and `HAL_DAC_Start_DMA` selects which data-holding register is written:
+
+| Alignment constant | Register | Data type | Notes |
+|---|---|---|---|
+| `DAC_ALIGN_8B_R` | DHR8Rx | `uint8_t` | Lower 8 bits drive bits [11:4] of the output; bits [3:0] are zero |
+| `DAC_ALIGN_12B_R` | DHR12Rx | `uint16_t` | Bits [11:0] drive the output directly |
+| `DAC_ALIGN_12B_L` | DHR12Lx | `uint16_t` | Bits [15:4] drive bits [11:0] of the output; useful when reading 16-bit ADC data |
+
+<Tip>
+  When generating waveforms via DMA, `DAC_ALIGN_8B_R` with a `uint8_t` table is the most memory-efficient option. Switch to `DAC_ALIGN_12B_R` when output fidelity matters, such as audio or precision signal generation.
+</Tip>

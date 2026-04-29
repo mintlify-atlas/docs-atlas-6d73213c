@@ -1,0 +1,71 @@
+---
+title: "STM32H7 supported boards and hardware reference"
+description: "All 21 official ST boards supported by STM32CubeH7, grouped by type with hardware highlights, dual-core callouts, and links to st.com product pages."
+---
+
+STM32CubeH7 v1.13.0 ships with validated BSP drivers and project examples for 21 official ST boards spanning the STM32H7 portfolio. Each board directory under `Projects/` contains Examples, Applications, Demonstrations, and Templates targeting that specific hardware.
+
+## Nucleo boards
+
+Nucleo boards provide an affordable, Arduino-compatible form factor with an integrated ST-LINK debugger. All Nucleo-144 variants in this family expose the Zio and morpho connectors.
+
+| Board | Product page | Notes |
+|---|---|---|
+| NUCLEO-H7A3ZI-Q | [st.com](https://www.st.com/en/product/nucleo-h7a3zi-q.html) | STM32H7A3ZI, up to 280 MHz, 1 MB Flash, 1.4 MB RAM |
+| NUCLEO-H723ZG | [st.com](https://www.st.com/en/product/nucleo-h723zg.html) | STM32H723ZG, up to 550 MHz, 1 MB Flash |
+| NUCLEO-H743ZI | [st.com](https://www.st.com/en/product/nucleo-h743zi.html) | STM32H743ZI, up to 480 MHz, 2 MB Flash |
+| NUCLEO-H743ZI2 | [st.com](https://www.st.com/en/product/nucleo-h743zi.html) | Revised hardware layout; same MCU as NUCLEO-H743ZI |
+| NUCLEO-H753ZI | [st.com](https://www.st.com/en/product/nucleo-h753zi.html) | STM32H753ZI — H743 with hardware cryptographic accelerator |
+| NUCLEO-H753ZI2 | [st.com](https://www.st.com/en/product/nucleo-h753zi.html) | Revised hardware layout; same MCU as NUCLEO-H753ZI |
+| NUCLEO-H745ZI-Q | [st.com](https://www.st.com/en/product/nucleo-h745zi-q.html) | STM32H745ZI — **dual-core** Cortex-M7 + Cortex-M4 |
+| NUCLEO-H755ZI-Q | [st.com](https://www.st.com/en/product/nucleo-h755zi-q.html) | STM32H755ZI — **dual-core** with hardware crypto |
+
+<Note>
+  NUCLEO-H745ZI-Q and NUCLEO-H755ZI-Q carry dual-core MCUs. Projects for these boards include separate Cortex-M7 and Cortex-M4 firmware images that run concurrently using the hardware semaphore (HSEM) peripheral for inter-processor communication.
+</Note>
+
+## Discovery kits
+
+Discovery kits bundle peripherals and sensors directly on the board, making them suitable for evaluating specific subsystems and running full demonstrations.
+
+| Board | Product page | Key features |
+|---|---|---|
+| STM32H747I-DISCO | [st.com](https://www.st.com/en/product/stm32h747i-disco.html) | STM32H747XI **dual-core**, 4-inch DSI LCD, QSPI Flash, OctoSPI RAM, Wi-Fi, camera connector |
+| STM32H747I-DISC1 | [st.com](https://www.st.com/en/product/stm32h747i-disco.html) | Board revision 1 of STM32H747I-DISCO; same feature set |
+| STM32H745I-DISCO | [st.com](https://www.st.com/en/product/stm32h745i-disco.html) | STM32H745XI **dual-core**, DSI LCD, Ethernet, Wi-Fi |
+| STM32H750B-DK | [st.com](https://www.st.com/en/product/stm32h750b-dk.html) | STM32H750XB, 4-inch DSI LCD, OctoSPI Flash, Ethernet |
+| STM32H735G-DK | [st.com](https://www.st.com/en/product/stm32h735g-dk.html) | STM32H735IG, 4-inch DSI LCD, OctoSPI Flash, Ethernet |
+| STM32H7B3I-DK | [st.com](https://www.st.com/en/product/stm32h7b3i-dk.html) | STM32H7B3LI, 2-inch WVGA LCD, USB Type-C, microSD |
+
+<Tip>
+  The STM32H747I-DISCO and STM32H745I-DISCO are the most feature-rich discovery kits in this family. Their dual-core MCUs, DSI display, and wireless connectivity make them the primary targets for the full-featured TouchGFX and audio demonstration firmware.
+</Tip>
+
+## Evaluation boards
+
+Evaluation boards expose the full peripheral set of their target MCU, typically with headers, external memory, and connectivity options for a comprehensive development environment.
+
+| Board | Product page | Key features |
+|---|---|---|
+| STM32H743I-EVAL | [st.com](https://www.st.com/en/product/stm32h743i-eval.html) | STM32H743XI, SDRAM, NOR Flash, LCD-TFT, Ethernet, CAN |
+| STM32H743I-EVAL2 | [st.com](https://www.st.com/en/product/stm32h743i-eval.html) | Revised board revision; same MCU as STM32H743I-EVAL |
+| STM32H753I-EVAL | [st.com](https://www.st.com/en/product/stm32h753i-eval.html) | STM32H753XI — H743 + hardware crypto, same peripheral set |
+| STM32H753I-EVAL2 | [st.com](https://www.st.com/en/product/stm32h753i-eval.html) | Revised board revision; same MCU as STM32H753I-EVAL |
+| STM32H747I-EVAL | [st.com](https://www.st.com/en/product/stm32h747i-eval.html) | STM32H747XI **dual-core**, SDRAM, NOR Flash, LCD-TFT, Ethernet |
+| STM32H757I-EVAL | [st.com](https://www.st.com/en/product/stm32h757i-eval.html) | STM32H757XI **dual-core** + hardware crypto, SDRAM, LCD-TFT |
+| STM32H7B3I-EVAL | [st.com](https://www.st.com/en/product/stm32h7b3i-eval.html) | STM32H7B3LI, SDRAM, NOR Flash, WVGA LCD, Ethernet |
+
+## Dual-core boards summary
+
+Four MCU families in this portfolio implement a Cortex-M7 + Cortex-M4 heterogeneous dual-core architecture. The table below lists every supported board that carries one of these MCUs.
+
+| MCU | Boards |
+|---|---|
+| STM32H745 | NUCLEO-H745ZI-Q, STM32H745I-DISCO |
+| STM32H747 | STM32H747I-DISCO, STM32H747I-DISC1, STM32H747I-EVAL |
+| STM32H755 | NUCLEO-H755ZI-Q |
+| STM32H757 | STM32H757I-EVAL |
+
+<Warning>
+  Dual-core projects require you to build and flash two separate ELF images — one for each core. The Cortex-M7 image is flashed to Bank 1 of internal Flash, and the Cortex-M4 image to Bank 2. Flashing only one image will leave the second core in reset.
+</Warning>

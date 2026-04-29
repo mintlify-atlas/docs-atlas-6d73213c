@@ -1,0 +1,197 @@
+---
+title: "HAL FLASH driver — internal Flash programming"
+description: "Erase and program the STM32H7 dual-bank internal Flash using sector-based operations, with unlock/lock sequencing and cache management."
+---
+
+The STM32H7 internal Flash controller exposes a HAL layer for erasing and programming the on-chip Flash memory. The STM32H743/H753 family provides 2 MB of dual-bank Flash (Bank 1 at `0x0800 0000`, Bank 2 at `0x0810 0000`), each divided into eight 128 KB sectors. All write and erase operations must be performed with the Flash unlocked, the instruction cache disabled, and the correct voltage range configured.
+
+<Warning>
+Always disable the instruction cache (`SCB_DisableICache()`) before any Flash erase or program operation, then re-enable it afterwards. Failing to do so can cause the CPU to execute stale cache lines after the Flash contents change.
+</Warning>
+
+## Flash memory map
+
+| Region | Start address | End address | Size |
+|--------|--------------|-------------|------|
+| Bank 1, Sector 0 | `0x0800 0000` | `0x0801 FFFF` | 128 KB |
+| Bank 1, Sector 1 | `0x0802 0000` | `0x0803 FFFF` | 128 KB |
+| … | … | … | … |
+| Bank 1, Sector 7 | `0x080E 0000` | `0x080F FFFF` | 128 KB |
+| Bank 2, Sector 0 | `0x0810 0000` | `0x0811 FFFF` | 128 KB |
+| … | … | … | … |
+| Bank 2, Sector 7 | `0x081E 0000` | `0x081F FFFF` | 128 KB |
+
+## Key types
+
+### FLASH_EraseInitTypeDef
+
+Passed to `HAL_FLASHEx_Erase()` to describe the erase operation.
+
+<ParamField path="body.TypeErase" type="uint32_t" required>
+  Selects sector or mass erase. Use `FLASH_TYPEERASE_SECTORS` to erase one or more sectors, or `FLASH_TYPEERASE_MASSERASE` to erase an entire bank.
+</ParamField>
+
+<ParamField path="body.Banks" type="uint32_t" required>
+  Target bank for the operation. `FLASH_BANK_1`, `FLASH_BANK_2`, or `FLASH_BANK_BOTH` (mass erase only).
+</ParamField>
+
+<ParamField path="body.Sector" type="uint32_t">
+  First sector to erase (`FLASH_SECTOR_0` through `FLASH_SECTOR_7`). Used only when `TypeErase` is `FLASH_TYPEERASE_SECTORS`.
+</ParamField>
+
+<ParamField path="body.NbSectors" type="uint32_t">
+  Number of consecutive sectors to erase starting from `Sector`. Must be between 1 and `(8 - Sector)`.
+</ParamField>
+
+<ParamField path="body.VoltageRange" type="uint32_t" required>
+  Supply voltage range, which determines the parallelism of the erase operation. Use `FLASH_VOLTAGE_RANGE_3` for a 2.7–3.6 V supply (word parallelism, fastest erase).
+</ParamField>
+
+## Key functions
+
+### HAL_FLASH_Unlock
+
+```c
+HAL_StatusTypeDef HAL_FLASH_Unlock(void);
+```
+
+Unlocks the Flash control register by writing the two magic keys (`FLASH_KEY1`, `FLASH_KEY2`) to `FLASH_KEYR`. Must be called before any erase or program operation.
+
+### HAL_FLASH_Lock
+
+```c
+HAL_StatusTypeDef HAL_FLASH_Lock(void);
+```
+
+Re-locks the Flash control register. Call this immediately after all write operations are complete to protect Flash from accidental modification.
+
+### HAL_FLASHEx_Erase
+
+```c
+HAL_StatusTypeDef HAL_FLASHEx_Erase(FLASH_EraseInitTypeDef *pEraseInit,
+                                     uint32_t *SectorError);
+```
+
+Performs a blocking sector or mass erase. On error, `*SectorError` receives the index of the failing sector, or `0xFFFFFFFF` if a mass-erase error occurred.
+
+<ParamField path="body.pEraseInit" type="FLASH_EraseInitTypeDef *" required>
+  Pointer to a populated erase configuration structure.
+</ParamField>
+
+<ParamField path="body.SectorError" type="uint32_t *" required>
+  Output: index of the sector that caused an error, or `0xFFFFFFFF` on success.
+</ParamField>
+
+### HAL_FLASH_Program
+
+```c
+HAL_StatusTypeDef HAL_FLASH_Program(uint32_t TypeProgram,
+                                     uint32_t Address,
+                                     uint32_t DataAddress);
+```
+
+Programs one Flash word at the given address. The STM32H7 Flash controller requires aligned writes.
+
+<ParamField path="body.TypeProgram" type="uint32_t" required>
+  Program width. `FLASH_TYPEPROGRAM_FLASHWORD` writes 256 bits (32 bytes) using a pointer to an eight-element `uint32_t` array. `FLASH_TYPEPROGRAM_DOUBLEWORD` writes 64 bits (8 bytes) using a `uint64_t` value passed as a pointer cast.
+</ParamField>
+
+<ParamField path="body.Address" type="uint32_t" required>
+  Destination Flash address. Must be 32-byte aligned for `FLASH_TYPEPROGRAM_FLASHWORD`, or 8-byte aligned for `FLASH_TYPEPROGRAM_DOUBLEWORD`.
+</ParamField>
+
+<ParamField path="body.DataAddress" type="uint32_t" required>
+  For `FLASH_TYPEPROGRAM_FLASHWORD`: cast a `uint32_t *` pointing to an 8-word source buffer. For `FLASH_TYPEPROGRAM_DOUBLEWORD`: cast a `uint64_t *` pointing to the 64-bit source value.
+</ParamField>
+
+### HAL_FLASH_GetError
+
+```c
+uint32_t HAL_FLASH_GetError(void);
+```
+
+Returns a bitmask of Flash error flags (`HAL_FLASH_ERROR_WRP`, `HAL_FLASH_ERROR_PGS`, etc.) after a failed operation. Call this after `HAL_FLASHEx_Erase()` or `HAL_FLASH_Program()` returns `HAL_ERROR`.
+
+## Flash wait states
+
+The number of Flash wait states (latency) must match the CPU clock and supply voltage. At 400 MHz with VOS1, use `FLASH_LATENCY_4` (four wait states). Pass this constant as the second argument to `HAL_RCC_ClockConfig()`.
+
+```c
+HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4);
+```
+
+<Note>
+If you increase the system clock, update the Flash latency **before** switching the clock source. If you decrease the system clock, update the Flash latency **after** switching.
+</Note>
+
+## Erase and program sequence
+
+The standard sequence for writing to internal Flash follows four phases: unlock, erase, program, lock.
+
+<Steps>
+  <Step title="Unlock the Flash">
+    ```c
+    HAL_FLASH_Unlock();
+    SCB_DisableICache();
+    ```
+  </Step>
+  <Step title="Erase target sectors">
+    ```c
+    FLASH_EraseInitTypeDef eraseInit;
+    uint32_t sectorError;
+
+    eraseInit.TypeErase    = FLASH_TYPEERASE_SECTORS;
+    eraseInit.VoltageRange = FLASH_VOLTAGE_RANGE_3;
+    eraseInit.Banks        = FLASH_BANK_1;
+    eraseInit.Sector       = FLASH_SECTOR_2;
+    eraseInit.NbSectors    = 2;   /* erase sectors 2 and 3 */
+
+    if (HAL_FLASHEx_Erase(&eraseInit, &sectorError) != HAL_OK)
+    {
+        /* sectorError holds the failing sector index */
+        uint32_t err = HAL_FLASH_GetError();
+        Error_Handler();
+    }
+    ```
+  </Step>
+  <Step title="Program Flash words">
+    ```c
+    /* Source data: eight 32-bit words = one 256-bit Flash word */
+    uint32_t data[8] = {
+        0x01020304, 0x05060708,
+        0x090A0B0C, 0x0D0E0F10,
+        0x11121314, 0x15161718,
+        0x191A1B1C, 0x1D1E1F20
+    };
+
+    uint32_t address = 0x08040000; /* start of Bank 1, Sector 2 */
+
+    if (HAL_FLASH_Program(FLASH_TYPEPROGRAM_FLASHWORD,
+                          address,
+                          (uint32_t)data) != HAL_OK)
+    {
+        Error_Handler();
+    }
+    /* Advance by 32 bytes for the next Flash word */
+    address += 32;
+    ```
+  </Step>
+  <Step title="Lock and re-enable cache">
+    ```c
+    HAL_FLASH_Lock();
+    SCB_EnableICache();
+    ```
+  </Step>
+</Steps>
+
+## Bank swap (FLASH_SwapBank)
+
+The STM32H7 supports swapping the logical addresses of Bank 1 and Bank 2 via the `FLASH_OPTCR` option byte (`SWAP_BANK` bit). This enables in-application firmware updates: program the new image into the inactive bank, set the swap bit, then reset. After reset, the new image runs from address `0x0800 0000`.
+
+<Tip>
+See `Projects/NUCLEO-H743ZI/Examples/FLASH/FLASH_SwapBank` for a complete bank-swap example, including option byte unlock, modification, and reset sequencing.
+</Tip>
+
+## Reference example
+
+`Projects/NUCLEO-H743ZI/Examples/FLASH/FLASH_EraseProgram` demonstrates the complete unlock → erase → program → lock sequence on a NUCLEO-H743ZI board, programming sectors 2–7 of Bank 1 with a repeating 256-bit pattern and verifying the written data by direct memory read-back.

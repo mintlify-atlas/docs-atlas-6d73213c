@@ -1,0 +1,69 @@
+---
+title: "STM32CubeH7: Complete MCU Firmware Package"
+description: "STM32CubeH7 is a complete MCU firmware package: HAL/LL drivers, CMSIS, BSP, FreeRTOS, LwIP, FatFs, and USB for 21 boards including dual-core STM32H7 variants."
+---
+
+STM32CubeH7 is STMicroelectronics' comprehensive firmware package for the STM32H7 microcontroller series. It bundles everything you need to build embedded applications — from low-level CMSIS core support and hardware abstraction layer (HAL) drivers, to board support packages (BSP), and a complete set of third-party middleware libraries including FreeRTOS, LwIP, FatFs, and USB stacks.
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/getting-started/installation">
+    Clone the repository and set up your toolchain for STM32H7 development
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/getting-started/quickstart">
+    Blink an LED and configure a UART — your first working STM32H7 application
+  </Card>
+  <Card title="HAL Drivers" icon="microchip" href="/drivers/hal-overview">
+    Portable hardware abstraction APIs for every STM32H7 peripheral
+  </Card>
+  <Card title="HAL API Reference" icon="book" href="/api/gpio">
+    Complete function signatures, parameters, and return types for HAL APIs
+  </Card>
+</CardGroup>
+
+## What's included
+
+STM32CubeH7 v1.13.0 ships with four major component layers, all integrated and validated to work together on every supported board.
+
+<CardGroup cols={2}>
+  <Card title="CMSIS Core & Device" icon="cpu" href="/drivers/cmsis">
+    ARM CMSIS core headers plus STM32H7xx device headers, startup files, and linker scripts
+  </Card>
+  <Card title="HAL & LL Drivers" icon="wrench" href="/drivers/hal-overview">
+    High-level HAL and ultra-low-layer LL peripheral drivers covering GPIO, UART, SPI, I2C, ADC, TIM, DMA, and more
+  </Card>
+  <Card title="Board Support Package" icon="circuit-board" href="/drivers/bsp">
+    Ready-to-use BSP drivers for Nucleo, Discovery, and Evaluation boards
+  </Card>
+  <Card title="Middleware" icon="layer-group" href="/middleware/freertos">
+    FreeRTOS, LwIP, FatFs, USB Host/Device, mbedTLS, and OpenAMP middleware
+  </Card>
+</CardGroup>
+
+## Supported boards
+
+STM32CubeH7 targets 21 official ST boards across the STM32H7 portfolio:
+
+- **Nucleo boards**: NUCLEO-H743ZI, NUCLEO-H753ZI, NUCLEO-H723ZG, NUCLEO-H745ZI-Q, NUCLEO-H755ZI-Q, NUCLEO-H7A3ZI-Q
+- **Discovery kits**: STM32H745I-DISCO, STM32H747I-DISCO, STM32H750B-DK, STM32H735G-DK, STM32H7B3I-DK
+- **Evaluation boards**: STM32H743I-EVAL, STM32H753I-EVAL, STM32H747I-EVAL, STM32H757I-EVAL, STM32H7B3I-EVAL
+
+<Card title="All supported boards" icon="list" href="/resources/supported-boards">
+  See the complete board list with links to hardware documentation
+</Card>
+
+## Project types
+
+For each supported board, STM32CubeH7 includes:
+
+| Type | Description |
+|------|-------------|
+| **Examples** | Single-peripheral demonstrations (GPIO, UART, ADC, TIM, DMA, etc.) |
+| **Examples\_LL** | Same coverage using the low-layer LL driver API |
+| **Examples\_MIX** | Mixed HAL/LL usage patterns |
+| **Applications** | Multi-peripheral applications using middleware (FreeRTOS, USB, LwIP, FatFs) |
+| **Demonstrations** | Full-featured demo firmware showcasing board capabilities |
+| **Templates** | Minimal project skeletons to start your own application |
+
+<Tip>
+  Use **Templates** as the starting point for new projects. They include the correct clock configuration, linker scripts, and startup files for your target board.
+</Tip>

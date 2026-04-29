@@ -1,0 +1,80 @@
+---
+title: "How to contribute to STM32CubeH7"
+description: "How to report bugs, sign the Contributor License Agreement (CLA), and submit pull requests to the STM32CubeH7 GitHub repository as a community contributor."
+---
+
+STMicroelectronics welcomes contributions from the community. This page covers how to report bugs, sign the Contributor License Agreement (CLA), and submit pull requests. For support questions unrelated to the repository content, use the ST Community forum instead.
+
+## Reporting an issue
+
+### Before you open an issue
+
+Check the following before posting:
+
+<Steps>
+  <Step title="Use the latest commit">
+    Pull the latest changes and reproduce the issue on the current `HEAD` before filing a report. Your issue may already be fixed.
+  </Step>
+  <Step title="Check that it is not a vulnerability">
+    Security vulnerabilities must not be reported as public GitHub issues. If your issue is a potential security vulnerability, follow the [security reporting process](/resources/security) instead.
+  </Step>
+  <Step title="Confirm the issue is in this repository">
+    The issue must be directly related to the software in the STM32CubeH7 repository. For general questions or support requests, post to the [ST Community forum](https://community.st.com/s/topiccatalog) on the appropriate topic page.
+  </Step>
+  <Step title="Search existing issues">
+    Search both open and closed issues to check whether your problem has already been reported, fixed, or discussed. Duplicate reports slow down triage.
+  </Step>
+</Steps>
+
+### Opening the issue
+
+Once you have completed the checks above, create a new report from the **Issues** tab of the repository. Issue templates are available to help you provide the information maintainers need to reproduce and resolve the problem.
+
+## Submitting a pull request
+
+### Sign the Contributor License Agreement
+
+All contributors must sign a CLA before any pull request can be accepted. The CLA process is handled at [cla.st.com](https://cla.st.com).
+
+<AccordionGroup>
+  <Accordion title="Individual CLA">
+    If you are writing original source code and you own the intellectual property, sign the **Individual CLA** at [cla.st.com](https://cla.st.com). This covers contributions you make on your own behalf.
+  </Accordion>
+  <Accordion title="Corporate CLA">
+    If you are contributing as part of your employment, your company must sign a **Corporate CLA** at [cla.st.com](https://cla.st.com). The Corporate CLA must reference your GitHub account name. The Corporate CLA always takes precedence over an Individual CLA.
+  </Accordion>
+  <Accordion title="Check your CLA status">
+    If you are unsure whether a CLA has already been signed for your GitHub account — either by yourself or by your employer — you can verify at [cla.st.com](https://cla.st.com).
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  One CLA submission is sufficient for any project proposed by STMicroelectronics. If you have already signed a CLA for another ST repository, you do not need to sign again.
+</Note>
+
+### How to proceed
+
+<Steps>
+  <Step title="Open an issue first">
+    Before investing time in code changes, open an issue to present your proposal. This confirms that your contribution falls within the scope and direction of the project, and avoids wasted effort if the change is out of scope.
+  </Step>
+  <Step title="Fork the repository">
+    Fork the STM32CubeH7 repository to your own GitHub account. Base your work on the latest commit to avoid conflicts with recent changes.
+  </Step>
+  <Step title="Develop your contribution">
+    Implement your change in your fork. Keep the scope narrow — one new feature or fix per pull request.
+  </Step>
+  <Step title="Submit one pull request per feature">
+    Open a pull request from your fork targeting the upstream repository. Submit a separate pull request for each independent feature or fix. This makes review and merging easier for the maintainers.
+  </Step>
+</Steps>
+
+## Support requests and general questions
+
+If your question or request is not directly related to the software in this repository — for example, a question about a specific peripheral, a toolchain configuration issue, or a broader STM32 topic — do not open a GitHub issue.
+
+Instead, post to the **ST Community** forum on the appropriate topic page:
+
+**[https://community.st.com/s/topiccatalog](https://community.st.com/s/topiccatalog)**
+
+The ST Community is monitored by ST engineers and experienced community members who can help with hardware questions, toolchain setup, peripheral configuration, and other topics outside the scope of this repository.

@@ -1,0 +1,357 @@
+---
+title: "HAL MDMA driver — master DMA for cross-domain transfers"
+description: "The STM32H7-exclusive MDMA controller transfers data across AXI, AHB, and APB buses. Covers MDMA_InitTypeDef, linked-list transfers, and SRAM-to-SDRAM examples."
+---
+
+The Master DMA (MDMA) controller is unique to the STM32H7 family — it does not exist on STM32F7, STM32H4, or any previous Cortex-M product line. Unlike DMA1/DMA2 (which are confined to specific bus domains), MDMA is connected directly to the 64-bit AXI bus matrix and can read from or write to **any** bus master: D1 AXI SRAM, D2 SRAM1/2, D3 SRAM, Flash, QUADSPI flash, and external memories through FMC (SDRAM, SRAM, NOR). This makes it the only DMA controller on STM32H7 that can move data between, for example, internal DTCM and an external SDRAM without CPU involvement.
+
+## When to use MDMA
+
+<Columns cols={2}>
+  <Card title="Use MDMA when…" icon="check">
+    - Source and destination are in different memory domains (e.g., D1 SRAM → external SDRAM)
+    - You need linked-list chaining to execute multiple heterogeneous transfers in sequence
+    - You are driving an LCD controller (LTDC) from external SDRAM frame buffers
+    - You need software-triggered block transfers with configurable address offsets
+  </Card>
+  <Card title="Use DMA1/DMA2 when…" icon="minus">
+    - Source and destination are both within D1/D2 domains
+    - The transfer is triggered by a peripheral request (UART RX, SPI TX, ADC, etc.)
+    - You need the lowest possible transfer latency with minimal configuration
+  </Card>
+</Columns>
+
+<Note>
+  MDMA channels are software-triggered by default (`MDMA_REQUEST_SW`). It can also be triggered by DMA1/DMA2 transfer-complete signals or QUADSPI events. It does **not** replace DMA1/DMA2 for peripheral-triggered streaming — it complements them for bulk memory moves.
+</Note>
+
+## MDMA_InitTypeDef
+
+Populate this structure and assign it to a `MDMA_HandleTypeDef.Init` before calling `HAL_MDMA_Init`.
+
+<ParamField path="Request" type="uint32_t" required>
+  Transfer trigger source. `MDMA_REQUEST_SW` for a software-started transfer (most common). Hardware triggers include `MDMA_REQUEST_DMA1_Stream0_TC` through `MDMA_REQUEST_DMA2_Stream7_TC` and `MDMA_REQUEST_QUADSPI_FIFO_TH`.
+</ParamField>
+
+<ParamField path="TransferTriggerMode" type="uint32_t" required>
+  How many bytes are moved each time a trigger arrives.
+
+  | Value | Description |
+  |---|---|
+  | `MDMA_BUFFER_TRANSFER` | One buffer (defined by `BufferTransferLength`) per trigger |
+  | `MDMA_BLOCK_TRANSFER` | One block (defined by `BlockDataLength` in start call) per trigger |
+  | `MDMA_REPEAT_BLOCK_TRANSFER` | Repeat block count times per trigger |
+  | `MDMA_FULL_TRANSFER` | Entire transfer in one trigger (typical for software-triggered use) |
+</ParamField>
+
+<ParamField path="Priority" type="uint32_t" required>
+  Bus arbitration priority: `MDMA_PRIORITY_LOW`, `MDMA_PRIORITY_MEDIUM`, `MDMA_PRIORITY_HIGH`, or `MDMA_PRIORITY_VERY_HIGH`.
+</ParamField>
+
+<ParamField path="Endianness" type="uint32_t">
+  Byte/half-word swap applied during transfer. `MDMA_LITTLE_ENDIANNESS_PRESERVE` (no swap, default) or the various `MDMA_LITTLE_BYTE_ENDIANNESS_EXCHANGE` / `MDMA_LITTLE_HALFWORD_ENDIANNESS_EXCHANGE` variants for network byte-order conversion.
+</ParamField>
+
+<ParamField path="DataAlignment" type="uint32_t">
+  Packing and alignment when source and destination widths differ. `MDMA_DATAALIGN_PACKENABLE` packs smaller source items into wider destination words. `MDMA_DATAALIGN_RIGHT` / `MDMA_DATAALIGN_RIGHT_SIGNED` / `MDMA_DATAALIGN_LEFT` control sign-extension and truncation.
+</ParamField>
+
+<ParamField path="BufferTransferLength" type="uint32_t" required>
+  Number of bytes moved per buffer transfer (1–128). Must be a multiple of the larger of `SourceDataSize` and `DestDataSize`. Setting this to the AXI burst length (e.g., 16 bytes for 4-beat word burst) maximises bus efficiency.
+</ParamField>
+
+<ParamField path="SourceInc" type="uint32_t">
+  Source address increment after each beat: `MDMA_SRC_INC_BYTE`, `MDMA_SRC_INC_HALFWORD`, `MDMA_SRC_INC_WORD`, `MDMA_SRC_INC_DOUBLEWORD`, or `MDMA_SRC_INC_DISABLE`.
+</ParamField>
+
+<ParamField path="DestinationInc" type="uint32_t">
+  Destination address increment after each beat: `MDMA_DEST_INC_BYTE` … `MDMA_DEST_INC_DOUBLEWORD`, or `MDMA_DEST_INC_DISABLE`.
+</ParamField>
+
+<ParamField path="SourceDataSize" type="uint32_t">
+  Width of each source read access: `MDMA_SRC_DATASIZE_BYTE`, `MDMA_SRC_DATASIZE_HALFWORD`, `MDMA_SRC_DATASIZE_WORD`, or `MDMA_SRC_DATASIZE_DOUBLEWORD`.
+</ParamField>
+
+<ParamField path="DestDataSize" type="uint32_t">
+  Width of each destination write access: `MDMA_DEST_DATASIZE_BYTE` … `MDMA_DEST_DATASIZE_DOUBLEWORD`.
+</ParamField>
+
+<ParamField path="SourceBurst" type="uint32_t">
+  AXI burst length for source reads: `MDMA_SOURCE_BURST_SINGLE`, `MDMA_SOURCE_BURST_2BEATS` … `MDMA_SOURCE_BURST_128BEATS`. Use burst transfers to maximise SDRAM throughput — single beats leave SDRAM row open less efficiently.
+</ParamField>
+
+<ParamField path="DestBurst" type="uint32_t">
+  AXI burst length for destination writes: `MDMA_DEST_BURST_SINGLE` … `MDMA_DEST_BURST_128BEATS`.
+</ParamField>
+
+<ParamField path="SourceBlockAddressOffset" type="int32_t">
+  Signed byte offset added to the source address at the start of each new block (for repeat-block or linked-list transfers). Useful for striding through 2D image data.
+</ParamField>
+
+<ParamField path="DestBlockAddressOffset" type="int32_t">
+  Signed byte offset added to the destination address at the start of each new block.
+</ParamField>
+
+## Functions
+
+### HAL_MDMA_Init
+
+Configures an MDMA channel with the settings in the handle's `Init` structure.
+
+```c
+HAL_StatusTypeDef HAL_MDMA_Init(MDMA_HandleTypeDef *hmdma);
+```
+
+<ParamField path="hmdma" type="MDMA_HandleTypeDef *" required>
+  Handle with `Instance` set to an MDMA channel (`MDMA_Channel0` … `MDMA_Channel15`) and `Init` fully populated. Enable the MDMA clock with `__HAL_RCC_MDMA_CLK_ENABLE()` before this call.
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` on success. `HAL_ERROR` on invalid parameters.
+</ResponseField>
+
+---
+
+### HAL_MDMA_DeInit
+
+Resets an MDMA channel to its default reset state.
+
+```c
+HAL_StatusTypeDef HAL_MDMA_DeInit(MDMA_HandleTypeDef *hmdma);
+```
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` on success.
+</ResponseField>
+
+---
+
+### HAL_MDMA_Start
+
+Starts an MDMA transfer in polling mode. Returns immediately; use `HAL_MDMA_PollForTransfer` to wait.
+
+```c
+HAL_StatusTypeDef HAL_MDMA_Start(MDMA_HandleTypeDef *hmdma,
+                                 uint32_t SrcAddress,
+                                 uint32_t DstAddress,
+                                 uint32_t BlockDataLength,
+                                 uint32_t BlockCount);
+```
+
+<ParamField path="hmdma" type="MDMA_HandleTypeDef *" required>
+  Initialised MDMA handle.
+</ParamField>
+
+<ParamField path="SrcAddress" type="uint32_t" required>
+  Source start address. Can be any address accessible on the AXI bus matrix, including external SDRAM.
+</ParamField>
+
+<ParamField path="DstAddress" type="uint32_t" required>
+  Destination start address.
+</ParamField>
+
+<ParamField path="BlockDataLength" type="uint32_t" required>
+  Number of **bytes** per block. MDMA always counts in bytes regardless of `SourceDataSize`/`DestDataSize`.
+</ParamField>
+
+<ParamField path="BlockCount" type="uint32_t" required>
+  Number of blocks to transfer. The total bytes moved = `BlockDataLength × BlockCount`.
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` if the channel started. `HAL_BUSY` if already active.
+</ResponseField>
+
+---
+
+### HAL_MDMA_Start_IT
+
+Starts an MDMA transfer in interrupt mode. Fires the transfer-complete or error callback from the MDMA IRQ.
+
+```c
+HAL_StatusTypeDef HAL_MDMA_Start_IT(MDMA_HandleTypeDef *hmdma,
+                                    uint32_t SrcAddress,
+                                    uint32_t DstAddress,
+                                    uint32_t BlockDataLength,
+                                    uint32_t BlockCount);
+```
+
+Same parameters as `HAL_MDMA_Start`. Register callbacks with `HAL_MDMA_RegisterCallback` and configure the NVIC before calling this function.
+
+---
+
+### HAL_MDMA_Abort
+
+Aborts an in-progress transfer and waits for the channel to disable.
+
+```c
+HAL_StatusTypeDef HAL_MDMA_Abort(MDMA_HandleTypeDef *hmdma);
+```
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` if the channel stopped. `HAL_TIMEOUT` if it did not stop within the timeout period.
+</ResponseField>
+
+---
+
+### HAL_MDMA_IRQHandler
+
+Call this from the MDMA channel IRQ handler. It clears all pending flags and dispatches to registered callbacks.
+
+```c
+void HAL_MDMA_IRQHandler(MDMA_HandleTypeDef *hmdma);
+```
+
+## Use case: SRAM to external SDRAM
+
+The following example demonstrates the primary use case for MDMA: copying a 64 KB frame buffer from internal D1 AXI SRAM to an external SDRAM connected via FMC. This transfer is impossible with DMA1/DMA2.
+
+<Steps>
+  <Step title="Declare buffers and handle">
+    ```c
+    #include "stm32h7xx_hal.h"
+
+    /* Source buffer in D1 AXI SRAM — cache-aligned for SCB operations */
+    ALIGN_32BYTES(static uint8_t srcBuffer[64 * 1024]);
+
+    /* Destination in external SDRAM via FMC (Bank 1, 0xC0000000) */
+    #define SDRAM_BASE_ADDR  0xC0000000UL
+
+    static MDMA_HandleTypeDef hmdma;
+    static volatile uint8_t  xferComplete = 0;
+    ```
+  </Step>
+
+  <Step title="Enable the MDMA clock and initialise the channel">
+    ```c
+    void MDMA_Init(void)
+    {
+        __HAL_RCC_MDMA_CLK_ENABLE();
+
+        hmdma.Instance = MDMA_Channel0;
+
+        hmdma.Init.Request              = MDMA_REQUEST_SW;
+        hmdma.Init.TransferTriggerMode  = MDMA_FULL_TRANSFER;
+        hmdma.Init.Priority             = MDMA_PRIORITY_HIGH;
+        hmdma.Init.Endianness           = MDMA_LITTLE_ENDIANNESS_PRESERVE;
+        hmdma.Init.SourceInc            = MDMA_SRC_INC_BYTE;
+        hmdma.Init.DestinationInc       = MDMA_DEST_INC_BYTE;
+        hmdma.Init.SourceDataSize       = MDMA_SRC_DATASIZE_WORD;
+        hmdma.Init.DestDataSize         = MDMA_DEST_DATASIZE_WORD;
+        hmdma.Init.DataAlignment        = MDMA_DATAALIGN_PACKENABLE;
+        hmdma.Init.SourceBurst          = MDMA_SOURCE_BURST_16BEATS;
+        hmdma.Init.DestBurst            = MDMA_DEST_BURST_16BEATS;
+        hmdma.Init.BufferTransferLength = 64; /* 16 × 4-byte words = 64 bytes */
+        hmdma.Init.SourceBlockAddressOffset = 0;
+        hmdma.Init.DestBlockAddressOffset   = 0;
+
+        if (HAL_MDMA_Init(&hmdma) != HAL_OK)
+        {
+            Error_Handler();
+        }
+
+        /* Register transfer-complete callback */
+        HAL_MDMA_RegisterCallback(&hmdma,
+                                  HAL_MDMA_XFER_CPLT_CB_ID,
+                                  MDMA_XferCpltCallback);
+
+        HAL_NVIC_SetPriority(MDMA_IRQn, 0, 0);
+        HAL_NVIC_EnableIRQ(MDMA_IRQn);
+    }
+    ```
+  </Step>
+
+  <Step title="Flush cache and start the transfer">
+    ```c
+    void CopyFrameBufferToSDRAM(void)
+    {
+        /* Clean D-cache for the source buffer before MDMA reads it */
+        SCB_CleanDCache_by_Addr((uint32_t *)srcBuffer, sizeof(srcBuffer));
+
+        xferComplete = 0;
+
+        HAL_MDMA_Start_IT(&hmdma,
+                          (uint32_t)srcBuffer,
+                          SDRAM_BASE_ADDR,
+                          sizeof(srcBuffer),  /* BlockDataLength in bytes */
+                          1);                 /* 1 block */
+
+        /* Wait for completion (or use an RTOS task notification) */
+        while (xferComplete == 0) {}
+    }
+    ```
+  </Step>
+
+  <Step title="Implement the callback and IRQ handler">
+    ```c
+    /* Callback — called from MDMA IRQ context */
+    static void MDMA_XferCpltCallback(MDMA_HandleTypeDef *hmdma)
+    {
+        xferComplete = 1;
+    }
+
+    /* stm32h7xx_it.c */
+    void MDMA_IRQHandler(void)
+    {
+        HAL_MDMA_IRQHandler(&hmdma);
+    }
+    ```
+  </Step>
+</Steps>
+
+## Linked-list transfers
+
+MDMA supports linked-list mode, where multiple transfer nodes execute back-to-back without CPU intervention. Each node is an `MDMA_LinkNodeTypeDef` structure that must be **64-bit aligned** and located in the **AXI address space** (D1 SRAM — not D3 SRAM).
+
+```c
+/* All link-list nodes must be in AXI SRAM and 64-bit aligned */
+ALIGN_32BYTES(static MDMA_LinkNodeTypeDef node1);
+ALIGN_32BYTES(static MDMA_LinkNodeTypeDef node2);
+
+MDMA_LinkNodeConfTypeDef nodeConf;
+
+/* Configure node 1 — copy region A → destination A */
+nodeConf.Init.Request             = MDMA_REQUEST_SW;
+nodeConf.Init.TransferTriggerMode = MDMA_FULL_TRANSFER;
+nodeConf.Init.Priority            = MDMA_PRIORITY_HIGH;
+nodeConf.Init.Endianness          = MDMA_LITTLE_ENDIANNESS_PRESERVE;
+nodeConf.Init.SourceInc           = MDMA_SRC_INC_WORD;
+nodeConf.Init.DestinationInc      = MDMA_DEST_INC_WORD;
+nodeConf.Init.SourceDataSize      = MDMA_SRC_DATASIZE_WORD;
+nodeConf.Init.DestDataSize        = MDMA_DEST_DATASIZE_WORD;
+nodeConf.Init.DataAlignment       = MDMA_DATAALIGN_PACKENABLE;
+nodeConf.Init.SourceBurst         = MDMA_SOURCE_BURST_SINGLE;
+nodeConf.Init.DestBurst           = MDMA_DEST_BURST_SINGLE;
+nodeConf.Init.BufferTransferLength = 4;
+nodeConf.Init.SourceBlockAddressOffset = 0;
+nodeConf.Init.DestBlockAddressOffset   = 0;
+nodeConf.SrcAddress    = (uint32_t)srcRegionA;
+nodeConf.DstAddress    = (uint32_t)dstRegionA;
+nodeConf.BlockDataLength = sizeof(srcRegionA);
+nodeConf.BlockCount    = 1;
+
+HAL_MDMA_LinkedList_CreateNode(&node1, &nodeConf);
+
+/* Configure node 2 — copy region B → destination B */
+nodeConf.SrcAddress      = (uint32_t)srcRegionB;
+nodeConf.DstAddress      = (uint32_t)dstRegionB;
+nodeConf.BlockDataLength = sizeof(srcRegionB);
+HAL_MDMA_LinkedList_CreateNode(&node2, &nodeConf);
+
+/* Chain: node1 → node2 */
+HAL_MDMA_LinkedList_AddNode(&hmdma, &node1, NULL);   /* append to head */
+HAL_MDMA_LinkedList_AddNode(&hmdma, &node2, &node1); /* append after node1 */
+
+/* Start — addresses/length here apply to node 0 (the Init parameters) */
+HAL_MDMA_Start_IT(&hmdma,
+                  (uint32_t)srcNode0, (uint32_t)dstNode0,
+                  sizeof(srcNode0), 1);
+```
+
+<Warning>
+  Link-list node structures must reside in the AXI address space (D1 AXI SRAM, 0x24000000 range) and be aligned to a 64-bit (8-byte) boundary. Placing nodes in D2 or D3 SRAM causes the MDMA controller to read garbage and execute undefined transfers.
+</Warning>
+
+<Tip>
+  When MDMA sources data from D1 AXI SRAM (which is cached by the Cortex-M7), call `SCB_CleanDCache_by_Addr` on the source buffer before starting the transfer. When MDMA writes to D1 AXI SRAM, call `SCB_InvalidateDCache_by_Addr` on the destination buffer after the transfer completes, before the CPU reads the result.
+</Tip>

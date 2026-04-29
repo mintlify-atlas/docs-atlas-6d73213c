@@ -1,0 +1,233 @@
+---
+title: "USB Host and Device stacks for STM32H7"
+description: "STM32H7 USB Device and Host middleware covering CDC, HID, MSC, and DFU device classes, HID/MSC host classes, and FS/HS speed selection with full code examples."
+---
+
+STM32CubeH7 includes two separate USB middleware libraries under `Middlewares/ST/`: `STM32_USB_Device_Library` for device-side operation and `STM32_USB_Host_Library` for host-side operation. The STM32H7 USB OTG peripheral supports both Full Speed (FS, 12 Mbit/s) and High Speed (HS, 480 Mbit/s, requires external ULPI PHY). The FS 48 MHz clock is derived from PLL3, while HS is clocked from the external ULPI at 60 MHz.
+
+## Library layout
+
+<Tabs>
+  <Tab title="Device library">
+    ```
+    Middlewares/ST/STM32_USB_Device_Library/
+    ├── Core/
+    │   ├── Inc/usbd_core.h
+    │   ├── Inc/usbd_ctlreq.h
+    │   └── Src/usbd_core.c
+    └── Class/
+        ├── CDC/        # Virtual COM Port (PSTN subprotocol)
+        ├── HID/        # Human Interface Device
+        ├── MSC/        # Mass Storage Class
+        ├── DFU/        # Device Firmware Upgrade
+        ├── CustomHID/  # Vendor-defined HID
+        └── Audio/      # USB Audio Class
+    ```
+  </Tab>
+  <Tab title="Host library">
+    ```
+    Middlewares/ST/STM32_USB_Host_Library/
+    ├── Core/
+    │   ├── Inc/usbh_core.h
+    │   └── Src/usbh_core.c
+    └── Class/
+        ├── HID/        # Keyboard and mouse
+        ├── MSC/        # USB flash drives (BOT/SCSI)
+        ├── CDC/        # Serial devices
+        └── MTP/        # Media Transfer Protocol
+    ```
+  </Tab>
+</Tabs>
+
+## Supported device classes
+
+| Class | Use case | Reference macro |
+|-------|----------|-----------------|
+| CDC (VCP) | Virtual COM port, USB-to-UART bridge | `USBD_CDC_CLASS` |
+| HID | Mouse, keyboard, custom HID | `USBD_HID_CLASS` |
+| MSC | USB mass storage (SD card, Flash) | `USBD_MSC_CLASS` |
+| DFU | Firmware upgrade over USB | `USBD_DFU_CLASS` |
+| CustomHID | Vendor-defined reports | `USBD_CUSTOM_HID_CLASS` |
+| Audio | USB audio streaming | `USBD_AUDIO_CLASS` |
+
+## CDC virtual COM port example
+
+The `CDC_Standalone` example (`Projects/STM32H743I-EVAL/Applications/USB_Device/CDC_Standalone/`) enumerates the STM32H743xx as a USB-to-RS232 bridge. The MCU relays data between the USB Bulk endpoints and a UART peripheral.
+
+### Initialisation sequence
+
+```c
+#include "usbd_core.h"
+#include "usbd_desc.h"
+#include "usbd_cdc.h"
+#include "usbd_cdc_interface.h"
+
+USBD_HandleTypeDef USBD_Device;
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    /* Enable USB voltage detector (required on STM32H7) */
+    HAL_PWREx_EnableUSBVoltageDetector();
+
+    /* Initialise the USB Device library */
+    USBD_Init(&USBD_Device, &VCP_Desc, 0);
+
+    /* Register the CDC class */
+    USBD_RegisterClass(&USBD_Device, USBD_CDC_CLASS);
+
+    /* Bind the application-level CDC interface callbacks */
+    USBD_CDC_RegisterInterface(&USBD_Device, &USBD_CDC_fops);
+
+    /* Start the USB stack */
+    USBD_Start(&USBD_Device);
+
+    while (1) {}
+}
+```
+
+### CDC interface callback structure
+
+The application implements five callbacks declared in `usbd_cdc_interface.c`:
+
+```c
+USBD_CDC_ItfTypeDef USBD_CDC_fops = {
+    CDC_Itf_Init,        /* Peripheral (UART) initialisation    */
+    CDC_Itf_DeInit,      /* Peripheral de-initialisation        */
+    CDC_Itf_Control,     /* SET_LINE_CODING / GET_LINE_CODING   */
+    CDC_Itf_Receive,     /* Data received from host (OUT ep)    */
+    CDC_TransmitCplt     /* Transmission to host complete (IN ep) */
+};
+```
+
+Data received over USB is stored in `UserRxBuffer` and forwarded to the UART. Data received from the UART is stored in `UserTxBuffer` and periodically polled by a timer to send IN tokens back to the host. The default line coding is:
+
+```c
+USBD_CDC_LineCodingTypeDef LineCoding = {
+    115200,  /* baud rate  */
+    0x00,    /* 1 stop bit */
+    0x00,    /* no parity  */
+    0x08     /* 8 data bits */
+};
+```
+
+<Note>
+The 7-bit data length with no parity is not supported by the VCP implementation. Use 8-bit data length.
+</Note>
+
+### Endpoint configuration
+
+Three endpoints are declared for CDC:
+
+- **Bulk IN** — STM32 → PC (data from UART to USB host), polled by `CDC_POLLING_INTERVAL`
+- **Bulk OUT** — PC → STM32 (data from USB host to UART), handled in `CDC_Itf_Receive()`
+- **Interrupt IN** — carries control requests (SET/GET\_LINE\_CODING, SEND\_BREAK)
+
+## USB speed selection
+
+<Tabs>
+  <Tab title="Full Speed (FS)">
+    Define `USE_USB_FS` in the preprocessor. The 48 MHz clock for FS is derived from PLL3. Available on all STM32H7 boards via the internal FS PHY.
+
+    ```c
+    /* In usbd_conf.h */
+    #define USE_USB_FS
+    ```
+  </Tab>
+  <Tab title="High Speed (HS)">
+    Define `USE_USB_HS` in the preprocessor. Requires an external ULPI PHY (for example the USB3320C on the STM32H743I-EVAL CN14 connector). The USB clock is 60 MHz from the ULPI.
+
+    ```c
+    /* In usbd_conf.h */
+    #define USE_USB_HS
+    ```
+
+    <Warning>
+    In HS mode with USB DMA enabled, data must be sent in multiples of 4-byte packets from word-aligned addresses. Avoid enabling DMA for CDC unless required.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## USB Host — HID and MSC
+
+The Host library is initialised similarly. The `HID_Standalone` and `MSC_Standalone` examples are available for NUCLEO-H723ZG, STM32H735G-DK, STM32H7B3I-DK, and STM32H747I-DISCO boards under `Projects/<board>/Applications/USB_Host/`.
+
+```c
+#include "usbh_core.h"
+#include "usbh_hid.h"
+
+USBH_HandleTypeDef hUSBHost;
+
+/* Application callback */
+void USBH_UserProcess(USBH_HandleTypeDef *phost, uint8_t id)
+{
+    switch (id)
+    {
+    case HOST_USER_SELECT_CONFIGURATION:
+        break;
+    case HOST_USER_DISCONNECTION:
+        /* handle disconnect */
+        break;
+    case HOST_USER_CLASS_ACTIVE:
+        /* HID device is ready */
+        break;
+    default:
+        break;
+    }
+}
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    USBH_Init(&hUSBHost, USBH_UserProcess, 0);
+    USBH_RegisterClass(&hUSBHost, USBH_HID_CLASS);
+    USBH_Start(&hUSBHost);
+
+    while (1)
+    {
+        USBH_Process(&hUSBHost);
+    }
+}
+```
+
+<Tip>
+Call `USBH_Process()` periodically from the main loop (or from a dedicated RTOS task) to drive the host state machine.
+</Tip>
+
+## Reference examples
+
+<CardGroup cols={2}>
+  <Card title="CDC_Standalone (STM32H743I-EVAL)" icon="terminal">
+    USB-to-UART virtual COM port. Full Speed and High Speed variants.
+    `Projects/STM32H743I-EVAL/Applications/USB_Device/CDC_Standalone/`
+  </Card>
+  <Card title="HID_Standalone (STM32H747I-DISCO)" icon="mouse-pointer">
+    USB HID device exposing a custom report. FS mode.
+    `Projects/STM32H747I-DISCO/Applications/USB_Device/HID_Standalone/`
+  </Card>
+  <Card title="MSC_Standalone (STM32H747I-DISCO)" icon="hard-drive">
+    USB mass storage class device backed by SD card or QSPI Flash.
+    `Projects/STM32H747I-DISCO/Applications/USB_Device/MSC_Standalone/`
+  </Card>
+  <Card title="DFU_Standalone (STM32H7B3I-DK)" icon="download">
+    Device Firmware Upgrade class; allows firmware upload over USB.
+    `Projects/STM32H7B3I-DK/Applications/USB_Device/DFU_Standalone/`
+  </Card>
+  <Card title="HID_Standalone Host (NUCLEO-H723ZG)" icon="keyboard">
+    USB Host HID — reads keyboard/mouse from a connected USB device.
+    `Projects/NUCLEO-H723ZG/Applications/USB_Host/HID_Standalone/`
+  </Card>
+  <Card title="MSC_Standalone Host (NUCLEO-H723ZG)" icon="usb">
+    USB Host MSC — mounts a USB flash drive using FatFs.
+    `Projects/NUCLEO-H723ZG/Applications/USB_Host/MSC_Standalone/`
+  </Card>
+</CardGroup>
+
+## Further reading
+
+- UM1734 — *STM32Cube USB Device library*
+- UM1720 — *STM32Cube USB Host library*

@@ -1,0 +1,270 @@
+---
+title: "HAL FMC driver — external memory controller"
+description: "Configure the STM32H7 FMC peripheral to interface with SDRAM, NOR Flash, PSRAM, and NAND memory using HAL initialization and command sequences."
+---
+
+The Flexible Memory Controller (FMC) on STM32H7 devices connects external memories — SDRAM, NOR/PSRAM, and NAND Flash — to the AHB3 bus. Most STM32H7 Discovery and Evaluation boards include a 32 MB SDRAM (IS42S32800G-6BL) mapped at `0xD000 0000` via FMC Bank 2. Correct initialization requires configuring the FMC peripheral, sending the SDRAM power-up command sequence, and programming the refresh rate.
+
+<Note>
+The FMC clock is derived from the AHB3 prescaler. At 200 MHz HCLK with `FMC_SDRAM_CLOCK_PERIOD_2`, the SDRAM clock runs at 100 MHz. Size your timing parameters in SDRAM clock cycles, not nanoseconds.
+</Note>
+
+## SDRAM handle and init structure
+
+### SDRAM_HandleTypeDef
+
+The top-level handle passed to all `HAL_SDRAM_*` functions.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `Instance` | `FMC_SDRAM_TypeDef *` | Set to `FMC_SDRAM_DEVICE`. |
+| `Init` | `FMC_SDRAM_InitTypeDef` | Static configuration (bank, width, latency). |
+| `State` | `HAL_SDRAM_StateTypeDef` | Driver state machine (managed by HAL). |
+| `Lock` | `HAL_LockTypeDef` | Driver-level mutex. |
+
+### FMC_SDRAM_InitTypeDef
+
+<ParamField path="body.SDBank" type="uint32_t" required>
+  Selects the FMC SDRAM bank. `FMC_SDRAM_BANK1` maps to `0xC000 0000`; `FMC_SDRAM_BANK2` maps to `0xD000 0000`. Most H7 Eval/Discovery boards use Bank 2.
+</ParamField>
+
+<ParamField path="body.ColumnBitsNumber" type="uint32_t" required>
+  Number of column address bits. `FMC_SDRAM_COLUMN_BITS_NUM_8`, `_NUM_9`, `_NUM_10`, or `_NUM_11`. The IS42S32800G uses 9 column bits.
+</ParamField>
+
+<ParamField path="body.RowBitsNumber" type="uint32_t" required>
+  Number of row address bits. `FMC_SDRAM_ROW_BITS_NUM_11`, `_NUM_12`, or `_NUM_13`. The IS42S32800G uses 12 row bits.
+</ParamField>
+
+<ParamField path="body.MemoryDataWidth" type="uint32_t" required>
+  Bus width. `FMC_SDRAM_MEM_BUS_WIDTH_8`, `_WIDTH_16`, or `_WIDTH_32`. The IS42S32800G is a ×32 device.
+</ParamField>
+
+<ParamField path="body.InternalBankNumber" type="uint32_t" required>
+  Number of internal SDRAM banks. `FMC_SDRAM_INTERN_BANKS_NUM_2` or `FMC_SDRAM_INTERN_BANKS_NUM_4`. The IS42S32800G has 4 banks.
+</ParamField>
+
+<ParamField path="body.CASLatency" type="uint32_t" required>
+  Column address strobe latency in SDRAM clock cycles. `FMC_SDRAM_CAS_LATENCY_1`, `_LATENCY_2`, or `_LATENCY_3`. Match this to the SDRAM mode register value.
+</ParamField>
+
+<ParamField path="body.WriteProtection" type="uint32_t" required>
+  Enable or disable write protection. `FMC_SDRAM_WRITE_PROTECTION_ENABLE` or `FMC_SDRAM_WRITE_PROTECTION_DISABLE`.
+</ParamField>
+
+<ParamField path="body.SDClockPeriod" type="uint32_t" required>
+  SDRAM clock divider relative to HCLK. `FMC_SDRAM_CLOCK_PERIOD_2` (HCLK/2) or `FMC_SDRAM_CLOCK_PERIOD_3` (HCLK/3). With 200 MHz HCLK, `PERIOD_2` yields a 100 MHz SDRAM clock.
+</ParamField>
+
+<ParamField path="body.ReadBurst" type="uint32_t" required>
+  Enable or disable read burst mode. `FMC_SDRAM_RBURST_ENABLE` or `FMC_SDRAM_RBURST_DISABLE`.
+</ParamField>
+
+<ParamField path="body.ReadPipeDelay" type="uint32_t" required>
+  Extra HCLK cycles inserted after the CAS latency before data is read. `FMC_SDRAM_RPIPE_DELAY_0`, `_DELAY_1`, or `_DELAY_2`. Typically `_DELAY_0` at 100 MHz.
+</ParamField>
+
+### FMC_SDRAM_TimingTypeDef
+
+All timing fields are in SDRAM clock cycles (not nanoseconds). Values below match a 100 MHz SDRAM clock and the IS42S32800G-6BL.
+
+<ParamField path="body.LoadToActiveDelay" type="uint32_t" required>
+  Mode register load-to-active command delay (tMRD). Minimum 2 cycles.
+</ParamField>
+
+<ParamField path="body.ExitSelfRefreshDelay" type="uint32_t" required>
+  Self-refresh exit to active command delay (tXSR). Minimum 7 cycles at 100 MHz for IS42S32800G.
+</ParamField>
+
+<ParamField path="body.SelfRefreshTime" type="uint32_t" required>
+  Self-refresh period (tRAS minimum). Minimum 4 cycles.
+</ParamField>
+
+<ParamField path="body.RowCycleDelay" type="uint32_t" required>
+  Row cycle delay (tRC). Minimum 7 cycles.
+</ParamField>
+
+<ParamField path="body.WriteRecoveryTime" type="uint32_t" required>
+  Write recovery time (tWR). Minimum 2 cycles.
+</ParamField>
+
+<ParamField path="body.RPDelay" type="uint32_t" required>
+  Row precharge delay (tRP). Minimum 2 cycles.
+</ParamField>
+
+<ParamField path="body.RCDDelay" type="uint32_t" required>
+  Row-to-column delay (tRCD). Minimum 2 cycles.
+</ParamField>
+
+## Key functions
+
+### HAL_SDRAM_Init
+
+```c
+HAL_StatusTypeDef HAL_SDRAM_Init(SDRAM_HandleTypeDef *hsdram,
+                                  FMC_SDRAM_TimingTypeDef *Timing);
+```
+
+Configures the FMC SDRAM peripheral registers. This function does **not** send the power-up command sequence to the SDRAM device — you must do that separately with `HAL_SDRAM_SendCommand()`.
+
+### HAL_SDRAM_SendCommand
+
+```c
+HAL_StatusTypeDef HAL_SDRAM_SendCommand(SDRAM_HandleTypeDef *hsdram,
+                                         FMC_SDRAM_CommandTypeDef *Command,
+                                         uint32_t Timeout);
+```
+
+Sends a command to the SDRAM device. The `CommandMode` field of `FMC_SDRAM_CommandTypeDef` accepts:
+
+| Constant | Description |
+|----------|-------------|
+| `FMC_SDRAM_CMD_CLK_ENABLE` | Enable the SDRAM clock |
+| `FMC_SDRAM_CMD_PALL` | Precharge all banks |
+| `FMC_SDRAM_CMD_AUTOREFRESH_MODE` | Issue auto-refresh cycles |
+| `FMC_SDRAM_CMD_LOAD_MODE` | Load the SDRAM mode register |
+| `FMC_SDRAM_CMD_SELFREFRESH_MODE` | Enter self-refresh |
+| `FMC_SDRAM_CMD_POWERDOWN_MODE` | Enter power-down |
+
+### HAL_SDRAM_ProgramRefreshRate
+
+```c
+HAL_StatusTypeDef HAL_SDRAM_ProgramRefreshRate(SDRAM_HandleTypeDef *hsdram,
+                                                uint32_t RefreshRate);
+```
+
+Sets the FMC refresh rate counter. The refresh count is calculated as:
+
+```
+RefreshCount = ((tREF / tCK) / RowCount) - 20
+```
+
+For a 64 ms refresh period, 4096 rows, and a 100 MHz SDRAM clock, the count is approximately `0x0603`.
+
+### Read and write functions
+
+```c
+/* 8-bit access */
+HAL_StatusTypeDef HAL_SDRAM_Read_8b(SDRAM_HandleTypeDef *hsdram,
+                                     uint32_t *pAddress,
+                                     uint8_t *pDstBuffer,
+                                     uint32_t BufferSize);
+HAL_StatusTypeDef HAL_SDRAM_Write_8b(SDRAM_HandleTypeDef *hsdram,
+                                      uint32_t *pAddress,
+                                      uint8_t *pSrcBuffer,
+                                      uint32_t BufferSize);
+
+/* 16-bit access */
+HAL_StatusTypeDef HAL_SDRAM_Read_16b(SDRAM_HandleTypeDef *hsdram,
+                                      uint32_t *pAddress,
+                                      uint16_t *pDstBuffer,
+                                      uint32_t BufferSize);
+HAL_StatusTypeDef HAL_SDRAM_Write_16b(SDRAM_HandleTypeDef *hsdram,
+                                       uint32_t *pAddress,
+                                       uint16_t *pSrcBuffer,
+                                       uint32_t BufferSize);
+
+/* 32-bit access */
+HAL_StatusTypeDef HAL_SDRAM_Read_32b(SDRAM_HandleTypeDef *hsdram,
+                                      uint32_t *pAddress,
+                                      uint32_t *pDstBuffer,
+                                      uint32_t BufferSize);
+HAL_StatusTypeDef HAL_SDRAM_Write_32b(SDRAM_HandleTypeDef *hsdram,
+                                       uint32_t *pAddress,
+                                       uint32_t *pSrcBuffer,
+                                       uint32_t BufferSize);
+```
+
+<Note>
+For performance-critical code, access SDRAM directly through its mapped address range (`0xD000 0000` for Bank 2) using pointer arithmetic rather than calling these HAL helper functions, which carry per-call overhead.
+</Note>
+
+## SDRAM initialization sequence
+
+SDRAM requires a specific power-up command sequence after `HAL_SDRAM_Init()`. The sequence follows the JEDEC standard: enable clock, wait ≥100 µs, precharge all banks, issue auto-refresh cycles, then load the mode register.
+
+<Steps>
+  <Step title="Configure and initialize the FMC peripheral">
+    ```c
+    SDRAM_HandleTypeDef hsdram;
+    FMC_SDRAM_TimingTypeDef sdramTiming;
+    FMC_SDRAM_CommandTypeDef cmd;
+
+    hsdram.Instance = FMC_SDRAM_DEVICE;
+
+    sdramTiming.LoadToActiveDelay    = 2;
+    sdramTiming.ExitSelfRefreshDelay = 7;
+    sdramTiming.SelfRefreshTime      = 4;
+    sdramTiming.RowCycleDelay        = 7;
+    sdramTiming.WriteRecoveryTime    = 2;
+    sdramTiming.RPDelay              = 2;
+    sdramTiming.RCDDelay             = 2;
+
+    hsdram.Init.SDBank             = FMC_SDRAM_BANK2;
+    hsdram.Init.ColumnBitsNumber   = FMC_SDRAM_COLUMN_BITS_NUM_9;
+    hsdram.Init.RowBitsNumber      = FMC_SDRAM_ROW_BITS_NUM_12;
+    hsdram.Init.MemoryDataWidth    = FMC_SDRAM_MEM_BUS_WIDTH_32;
+    hsdram.Init.InternalBankNumber = FMC_SDRAM_INTERN_BANKS_NUM_4;
+    hsdram.Init.CASLatency         = FMC_SDRAM_CAS_LATENCY_3;
+    hsdram.Init.WriteProtection    = FMC_SDRAM_WRITE_PROTECTION_DISABLE;
+    hsdram.Init.SDClockPeriod      = FMC_SDRAM_CLOCK_PERIOD_2;
+    hsdram.Init.ReadBurst          = FMC_SDRAM_RBURST_ENABLE;
+    hsdram.Init.ReadPipeDelay      = FMC_SDRAM_RPIPE_DELAY_0;
+
+    HAL_SDRAM_Init(&hsdram, &sdramTiming);
+    ```
+  </Step>
+  <Step title="Enable the SDRAM clock">
+    ```c
+    cmd.CommandMode            = FMC_SDRAM_CMD_CLK_ENABLE;
+    cmd.CommandTarget          = FMC_SDRAM_CMD_TARGET_BANK2;
+    cmd.AutoRefreshNumber      = 1;
+    cmd.ModeRegisterDefinition = 0;
+    HAL_SDRAM_SendCommand(&hsdram, &cmd, 0xFFFF);
+
+    /* Wait at least 100 µs — HAL_Delay(1) gives 1 ms */
+    HAL_Delay(1);
+    ```
+  </Step>
+  <Step title="Precharge all banks">
+    ```c
+    cmd.CommandMode = FMC_SDRAM_CMD_PALL;
+    HAL_SDRAM_SendCommand(&hsdram, &cmd, 0xFFFF);
+    ```
+  </Step>
+  <Step title="Issue 8 auto-refresh cycles">
+    ```c
+    cmd.CommandMode       = FMC_SDRAM_CMD_AUTOREFRESH_MODE;
+    cmd.AutoRefreshNumber = 8;
+    HAL_SDRAM_SendCommand(&hsdram, &cmd, 0xFFFF);
+    ```
+  </Step>
+  <Step title="Load the SDRAM mode register">
+    ```c
+    /* CAS latency 3, sequential burst length 1, single-location write burst */
+    uint32_t modeReg = (0x0030U)  /* CAS latency = 3 */
+                     | (0x0200U); /* write burst = single location */
+
+    cmd.CommandMode            = FMC_SDRAM_CMD_LOAD_MODE;
+    cmd.AutoRefreshNumber      = 1;
+    cmd.ModeRegisterDefinition = modeReg;
+    HAL_SDRAM_SendCommand(&hsdram, &cmd, 0xFFFF);
+    ```
+  </Step>
+  <Step title="Program the refresh rate">
+    ```c
+    /* 0x0603 for 64 ms / 4096 rows at 100 MHz SDRAM clock */
+    HAL_SDRAM_ProgramRefreshRate(&hsdram, 0x0603);
+    ```
+  </Step>
+</Steps>
+
+After the sequence completes, the SDRAM is ready for direct memory-mapped access at `0xD000 0000`.
+
+## NOR / PSRAM interface
+
+The FMC NOR/PSRAM interface uses `SRAM_HandleTypeDef`, `FMC_NORSRAM_InitTypeDef`, and `FMC_NORSRAM_TimingTypeDef`. Initialization follows the same pattern: configure `sramHandle.Init`, call `HAL_SRAM_Init()`, and access memory at the NOR/PSRAM mapped address. See `Projects/STM32H743I-EVAL/Applications/ExtMem_CodeExecution/ExtMem_Boot/Src/fmc.c` for a complete NOR initialization example.
+
+<Warning>
+When using the FMC with the CPU caches enabled, mark the SDRAM region as non-cacheable in the MPU (or use strongly-ordered device memory attributes). Failing to do this causes cache coherency issues when both CPU and DMA access the same SDRAM buffers.
+</Warning>

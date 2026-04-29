@@ -1,0 +1,308 @@
+---
+title: "STM32H7 USB Host and Device HAL reference"
+description: "HAL reference for STM32H7 USB OTG FS and HS: PCD/HCD handles, device and host init sequences, supported USB classes, and CDC virtual COM port example."
+---
+
+STM32H7 devices include two USB OTG controllers: **USB OTG FS** (Full Speed, 12 Mbit/s) and **USB OTG HS** (High Speed, 480 Mbit/s). The HS controller can use an integrated Full Speed PHY or an external ULPI High Speed PHY such as the USB3320. Both controllers support Device, Host, and dual-role (OTG) operation. The USB HAL is split into two separate layers: the low-level HAL (`HAL_PCD_*` for device, `HAL_HCD_*` for host) and the higher-level USB Device Library (`USBD_*`) or USB Host Library (`USBH_*`).
+
+<Note>
+Call `HAL_PWREx_EnableUSBVoltageDetector()` before starting USB on STM32H7. The USB supply requires the voltage detector to be active regardless of whether VBUS is used.
+</Note>
+
+## USB OTG instances
+
+| Instance | Speed | PHY | NVIC IRQ |
+|---|---|---|---|
+| USB1_OTG_HS | HS (480 Mbit/s) or FS (via internal FS PHY) | External ULPI or internal FS PHY | `OTG_HS_IRQn` |
+| USB2_OTG_FS | FS (12 Mbit/s) | Internal FS PHY | `OTG_FS_IRQn` |
+
+<Tip>
+Use USB2_OTG_FS for simple HID or CDC device applications. Use USB1_OTG_HS with an external ULPI PHY (e.g., on the STM32H743I-EVAL board) when you need bulk throughput above 1 MB/s.
+</Tip>
+
+## USB Device (PCD)
+
+The Peripheral Controller Driver (PCD) is the low-level HAL layer that manages USB endpoints, interrupts, and FIFO allocations.
+
+### PCD_HandleTypeDef
+
+The handle aggregates all state for one USB OTG instance in device mode.
+
+<ParamField path="Instance" type="USB_OTG_GlobalTypeDef *" required>
+  Pointer to the USB OTG peripheral registers: `USB_OTG_FS` or `USB_OTG_HS`.
+</ParamField>
+
+<ParamField path="Init.dev_endpoints" type="uint32_t" required>
+  Number of device endpoints to activate (including EP0). Maximum 9 for OTG HS, 6 for OTG FS.
+</ParamField>
+
+<ParamField path="Init.speed" type="uint32_t" required>
+  `PCD_SPEED_HIGH`, `PCD_SPEED_HIGH_IN_FULL`, or `PCD_SPEED_FULL`.
+</ParamField>
+
+<ParamField path="Init.phy_itface" type="uint32_t" required>
+  PHY selection: `PCD_PHY_ULPI` (external ULPI), `PCD_PHY_EMBEDDED` (internal FS PHY), or `PCD_PHY_UTMI`.
+</ParamField>
+
+<ParamField path="Init.Sof_enable" type="uint32_t">
+  Enable Start-of-Frame interrupt: `ENABLE` or `DISABLE`.
+</ParamField>
+
+<ParamField path="Init.low_power_enable" type="uint32_t">
+  Enable low-power mode support: `ENABLE` or `DISABLE`.
+</ParamField>
+
+<ParamField path="Init.lpm_enable" type="uint32_t">
+  Enable USB 2.0 Link Power Management (LPM): `ENABLE` or `DISABLE`.
+</ParamField>
+
+<ParamField path="Init.vbus_sensing_enable" type="uint32_t">
+  Enable VBUS sensing: `ENABLE` or `DISABLE`. Disable when VBUS is always present (bus-powered device).
+</ParamField>
+
+### Key device functions
+
+#### HAL_PCD_Init
+
+```c
+HAL_StatusTypeDef HAL_PCD_Init(PCD_HandleTypeDef *hpcd);
+```
+
+Initializes the USB OTG peripheral in device mode, calls `HAL_PCD_MspInit`, and configures FIFO sizes. Must be called before `HAL_PCD_Start`.
+
+#### HAL_PCD_Start
+
+```c
+HAL_StatusTypeDef HAL_PCD_Start(PCD_HandleTypeDef *hpcd);
+```
+
+Connects the device to the USB bus (enables pull-up on D+ for FS, or signals presence to the host).
+
+#### HAL_PCD_Stop
+
+```c
+HAL_StatusTypeDef HAL_PCD_Stop(PCD_HandleTypeDef *hpcd);
+```
+
+Disconnects the device from the bus and disables USB interrupts.
+
+#### HAL_PCD_IRQHandler
+
+```c
+void HAL_PCD_IRQHandler(PCD_HandleTypeDef *hpcd);
+```
+
+Call from `OTG_FS_IRQHandler` or `OTG_HS_IRQHandler`. Drives the USB device state machine and dispatches callbacks.
+
+```c
+/* stm32h7xx_it.c */
+void OTG_FS_IRQHandler(void)
+{
+  HAL_PCD_IRQHandler(&hpcd_USB_OTG_FS);
+}
+```
+
+## USB Host (HCD)
+
+The Host Controller Driver (HCD) manages USB host channels, enumeration signals, and data transactions.
+
+### HCD_HandleTypeDef
+
+<ParamField path="Instance" type="USB_OTG_GlobalTypeDef *" required>
+  `USB_OTG_FS` or `USB_OTG_HS`.
+</ParamField>
+
+<ParamField path="Init.Host_channels" type="uint32_t" required>
+  Number of host channels to allocate. Maximum 12 for HS, 8 for FS.
+</ParamField>
+
+<ParamField path="Init.speed" type="uint32_t" required>
+  `HCD_SPEED_HIGH`, `HCD_SPEED_FULL`, or `HCD_SPEED_LOW`.
+</ParamField>
+
+<ParamField path="Init.phy_itface" type="uint32_t" required>
+  PHY interface, same values as PCD: `HCD_PHY_ULPI` or `HCD_PHY_EMBEDDED`.
+</ParamField>
+
+### Key host functions
+
+#### HAL_HCD_Init
+
+```c
+HAL_StatusTypeDef HAL_HCD_Init(HCD_HandleTypeDef *hhcd);
+```
+
+#### HAL_HCD_Start
+
+```c
+HAL_StatusTypeDef HAL_HCD_Start(HCD_HandleTypeDef *hhcd);
+```
+
+Enables VBUS power and starts host operation.
+
+#### HAL_HCD_Stop
+
+```c
+HAL_StatusTypeDef HAL_HCD_Stop(HCD_HandleTypeDef *hhcd);
+```
+
+#### HAL_HCD_IRQHandler
+
+```c
+void HAL_HCD_IRQHandler(HCD_HandleTypeDef *hhcd);
+```
+
+Call from the OTG IRQ handler in host mode.
+
+```c
+void OTG_HS_IRQHandler(void)
+{
+  HAL_HCD_IRQHandler(&hhcd_USB_OTG_HS);
+}
+```
+
+## Supported USB classes
+
+The STM32CubeH7 Middleware layer provides pre-built class drivers that sit on top of the HAL PCD/HCD layer.
+
+### Device classes
+
+<AccordionGroup>
+  <Accordion title="CDC — Communication Device Class (Virtual COM Port)">
+    Exposes a virtual serial port to the host OS. Uses two bulk endpoints plus one interrupt endpoint. Ideal for debug logging, command interfaces, and bootloaders.
+
+    Library path: `Middlewares/ST/STM32_USB_Device_Library/Class/CDC`
+
+    Registration: `USBD_RegisterClass(&USBD_Device, USBD_CDC_CLASS)`
+  </Accordion>
+
+  <Accordion title="HID — Human Interface Device">
+    Mouse, keyboard, gamepad, or custom HID report. Uses one interrupt IN endpoint (and optionally one interrupt OUT endpoint for output reports).
+
+    Library path: `Middlewares/ST/STM32_USB_Device_Library/Class/HID`
+
+    Registration: `USBD_RegisterClass(&USBD_Device, USBD_HID_CLASS)`
+  </Accordion>
+
+  <Accordion title="MSC — Mass Storage Class">
+    Bulk-Only Transport (BOT) storage device. Exposes a SCSI logical unit backed by a storage driver (SD card, NAND flash, RAM disk).
+
+    Library path: `Middlewares/ST/STM32_USB_Device_Library/Class/MSC`
+
+    Registration: `USBD_RegisterClass(&USBD_Device, USBD_MSC_CLASS)`
+  </Accordion>
+
+  <Accordion title="Audio — USB Audio Class">
+    Isochronous audio streaming device (speaker, microphone, or both). Supports 16-bit PCM at standard sample rates.
+
+    Library path: `Middlewares/ST/STM32_USB_Device_Library/Class/AUDIO`
+  </Accordion>
+
+  <Accordion title="DFU — Device Firmware Upgrade">
+    Enables in-field firmware updates over USB without a dedicated programmer. The host uses `dfu-util` or the DfuSe tool.
+
+    Library path: `Middlewares/ST/STM32_USB_Device_Library/Class/DFU`
+  </Accordion>
+</AccordionGroup>
+
+### Host classes
+
+<AccordionGroup>
+  <Accordion title="HID host">
+    Enumerates and reads reports from HID devices (keyboards, mice). Parses HID report descriptors.
+
+    Library path: `Middlewares/ST/STM32_USB_Host_Library/Class/HID`
+  </Accordion>
+
+  <Accordion title="MSC host">
+    Mounts USB flash drives and SD card readers. Integrates with FatFS via the `USBH_MSC` interface.
+
+    Library path: `Middlewares/ST/STM32_USB_Host_Library/Class/MSC`
+  </Accordion>
+
+  <Accordion title="CDC host">
+    Communicates with USB CDC devices (modems, USB-to-serial adapters) from the STM32 acting as host.
+
+    Library path: `Middlewares/ST/STM32_USB_Host_Library/Class/CDC`
+  </Accordion>
+
+  <Accordion title="MTP host">
+    Media Transfer Protocol host for accessing media files on phones and portable players.
+
+    Library path: `Middlewares/ST/STM32_USB_Host_Library/Class/MTP`
+  </Accordion>
+</AccordionGroup>
+
+## CDC device init sequence
+
+The following sequence initialises a CDC Virtual COM Port device on USB OTG FS. The `USBD_CDC_fops` structure provides the application-level TX/RX callbacks.
+
+<Steps>
+  <Step title="Enable USB voltage detector">
+    ```c
+    HAL_PWREx_EnableUSBVoltageDetector();
+    ```
+
+    Must be called before any USB peripheral access on STM32H7.
+  </Step>
+
+  <Step title="Initialise the USB Device Library">
+    ```c
+    USBD_HandleTypeDef USBD_Device;
+
+    /* VCP_Desc is the device descriptor table generated by CubeMX or written manually */
+    USBD_Init(&USBD_Device, &VCP_Desc, DEVICE_FS);
+    ```
+  </Step>
+
+  <Step title="Register the CDC class">
+    ```c
+    USBD_RegisterClass(&USBD_Device, USBD_CDC_CLASS);
+    ```
+  </Step>
+
+  <Step title="Register the CDC interface callbacks">
+    ```c
+    /* USBD_CDC_fops provides Init, DeInit, Control, Receive function pointers */
+    USBD_CDC_RegisterInterface(&USBD_Device, &USBD_CDC_fops);
+    ```
+
+    Implement `USBD_CDC_fops.Receive` to handle data arriving from the host:
+
+    ```c
+    static int8_t CDC_Receive_FS(uint8_t *Buf, uint32_t *Len)
+    {
+      /* Process Len bytes from Buf */
+      USBD_CDC_SetRxBuffer(&USBD_Device, Buf);
+      USBD_CDC_ReceivePacket(&USBD_Device);
+      return USBD_OK;
+    }
+    ```
+  </Step>
+
+  <Step title="Start the device">
+    ```c
+    USBD_Start(&USBD_Device);
+    ```
+
+    The device is now visible to the host and will enumerate as a CDC ACM interface.
+  </Step>
+
+  <Step title="Transmit data to the host">
+    ```c
+    uint8_t msg[] = "Hello from STM32H7\r\n";
+    USBD_CDC_HandleTypeDef *cdc =
+        (USBD_CDC_HandleTypeDef *)USBD_Device.pClassData;
+
+    /* Wait until previous TX completes */
+    while (cdc->TxState != 0) {}
+
+    USBD_CDC_SetTxBuffer(&USBD_Device, msg, sizeof(msg) - 1);
+    USBD_CDC_TransmitPacket(&USBD_Device);
+    ```
+  </Step>
+</Steps>
+
+<Note>
+The `PCD_HandleTypeDef hpcd` is initialised inside `HAL_PCD_MspInit` (generated by CubeMX) and is internally referenced by the USB Device Library via `USBD_LL_*` functions. You rarely need to call `HAL_PCD_*` functions directly when using the Device Library abstraction.
+</Note>

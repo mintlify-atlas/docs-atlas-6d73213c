@@ -1,0 +1,271 @@
+---
+title: "LwIP TCP/IP networking stack on STM32H7"
+description: "Integrate LwIP on STM32H7 with Ethernet and FreeRTOS. Configure the netif, use the netconn API for TCP servers, and handle DHCP with the ethernetif driver."
+---
+
+STM32CubeH7 bundles LwIP as a third-party submodule at `Middlewares/Third_Party/LwIP/`. The reference integration uses the STM32H7 Ethernet MAC together with a LAN8742 PHY, zero-copy DMA descriptors placed in D2 SRAM, and FreeRTOS threads to drive the TCP/IP stack. The primary example is a fully functional HTTP server that demonstrates both static and dynamic page serving.
+
+<Note>
+The LwIP submodule directory is empty until you run `git submodule update --init`. All LwIP source files are present after initialisation.
+</Note>
+
+## Architecture overview
+
+```
+Application (HTTP server, your code)
+        │  netconn / socket API
+        ▼
+    LwIP TCP/IP stack
+    tcpip_init() thread (sys_thread_new)
+        │
+        ▼
+   ethernetif.c          ← your glue layer (provided in each example)
+   STM32H7 ETH HAL       ← DMA descriptors in D2 SRAM3 (0x30040000)
+   LAN8742 PHY
+```
+
+The key constraint on STM32H7 is that the Ethernet DMA **cannot access DTCM** (`0x20000000`). All receive/transmit buffers and DMA descriptors must reside in D1 AXI-SRAM (`0x24000000`) or D2 SRAM.
+
+## Ethernet DMA descriptor placement
+
+The `ethernetif.c` in the NUCLEO-H743ZI example places DMA descriptors in D2 SRAM using compiler-specific attributes:
+
+```c
+/* IAR */
+#pragma location=0x30000000
+ETH_DMADescTypeDef DMARxDscrTab[ETH_RX_DESC_CNT];
+
+#pragma location=0x30000080
+ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT];
+
+/* GCC / ARM Compiler 6 */
+__attribute__((section(".RxDescripSection")))
+ETH_DMADescTypeDef DMARxDscrTab[ETH_RX_DESC_CNT];
+
+__attribute__((section(".TxDescripSection")))
+ETH_DMADescTypeDef DMATxDscrTab[ETH_TX_DESC_CNT];
+```
+
+Receive buffers use a zero-copy scheme: each `RxBuff_t` holds a `pbuf_custom` and a 32-byte-aligned data buffer. The buffer size is `ETH_RX_BUFFER_SIZE` (1000 bytes by default), and 12 buffers are allocated (`ETH_RX_BUFFER_CNT`).
+
+## Initialising LwIP with FreeRTOS
+
+The `LwIP_HTTP_Server_Netconn_RTOS` example (`Projects/NUCLEO-H743ZI/Applications/LwIP/LwIP_HTTP_Server_Netconn_RTOS/`) shows the canonical initialisation sequence:
+
+```c
+#include "lwip/netif.h"
+#include "lwip/tcpip.h"
+#include "ethernetif.h"
+
+struct netif gnetif;
+
+void StartThread(void *argument)
+{
+    /* Initialise the TCP/IP stack thread */
+    tcpip_init(NULL, NULL);
+
+    /* Configure and add the network interface */
+    Netif_Config();
+
+    /* Start the application */
+    http_server_netconn_init();
+
+    osThreadTerminate(NULL);
+}
+
+static void Netif_Config(void)
+{
+    ip_addr_t ipaddr, netmask, gw;
+
+#if LWIP_DHCP
+    ip_addr_set_zero_ip4(&ipaddr);
+    ip_addr_set_zero_ip4(&netmask);
+    ip_addr_set_zero_ip4(&gw);
+#else
+    IP_ADDR4(&ipaddr,   IP_ADDR0,    IP_ADDR1,    IP_ADDR2,    IP_ADDR3);
+    IP_ADDR4(&netmask,  NETMASK_ADDR0, NETMASK_ADDR1,
+                        NETMASK_ADDR2, NETMASK_ADDR3);
+    IP_ADDR4(&gw,       GW_ADDR0, GW_ADDR1, GW_ADDR2, GW_ADDR3);
+#endif
+
+    netif_add(&gnetif, &ipaddr, &netmask, &gw,
+              NULL, &ethernetif_init, &tcpip_input);
+
+    netif_set_default(&gnetif);
+    ethernet_link_status_updated(&gnetif);
+
+#if LWIP_NETIF_LINK_CALLBACK
+    netif_set_link_callback(&gnetif, ethernet_link_status_updated);
+    /* Thread to monitor Ethernet link state via PHY */
+    osThreadNew(ethernet_link_thread, &gnetif, &EthLinkThread_attributes);
+#endif
+
+#if LWIP_DHCP
+    osThreadNew(DHCP_Thread, &gnetif, &DHCPThread_attributes);
+#endif
+}
+```
+
+<Tip>
+Enable DHCP by setting `#define LWIP_DHCP 1` in `lwipopts.h`. After `dhcp_supplied_address(netif)` returns true, the allocated address is in `gnetif.ip_addr`. In a debugger, `gnetif.ip_addr.addr` shows the IP in little-endian hex (for example `0x0200A8C0` = `192.168.0.2`).
+</Tip>
+
+## Netconn API — TCP server
+
+The `httpserver_netconn.c` file in the example demonstrates a minimal TCP server using the netconn API:
+
+```c
+#include "lwip/api.h"
+
+static void http_server_netconn_thread(void *arg)
+{
+    struct netconn *conn, *newconn;
+    err_t err, accept_err;
+
+    /* Create a new TCP connection */
+    conn = netconn_new(NETCONN_TCP);
+
+    if (conn != NULL)
+    {
+        /* Bind to port 80 with any local IP */
+        err = netconn_bind(conn, NULL, 80);
+
+        if (err == ERR_OK)
+        {
+            /* Start listening */
+            netconn_listen(conn);
+
+            while (1)
+            {
+                /* Block until a client connects */
+                accept_err = netconn_accept(conn, &newconn);
+                if (accept_err == ERR_OK)
+                {
+                    http_server_serve(newconn);
+                    netconn_delete(newconn);
+                }
+            }
+        }
+    }
+}
+
+static void http_server_serve(struct netconn *conn)
+{
+    struct netbuf *inbuf;
+    err_t recv_err;
+    char *buf;
+    u16_t buflen;
+
+    /* Receive the HTTP request (blocking) */
+    recv_err = netconn_recv(conn, &inbuf);
+
+    if (recv_err == ERR_OK)
+    {
+        netbuf_data(inbuf, (void **)&buf, &buflen);
+
+        if ((buflen >= 5) && (strncmp(buf, "GET /", 5) == 0))
+        {
+            /* Send the response */
+            netconn_write(conn, response_data, response_len, NETCONN_COPY);
+        }
+    }
+
+    netconn_close(conn);
+    netbuf_delete(inbuf);
+}
+
+/* Spawn the server thread from application code */
+void http_server_netconn_init(void)
+{
+    sys_thread_new("HTTP", http_server_netconn_thread,
+                   NULL, DEFAULT_THREAD_STACKSIZE * 4,
+                   WEBSERVER_THREAD_PRIO);
+}
+```
+
+## DHCP client thread
+
+When `LWIP_DHCP` is enabled, a dedicated FreeRTOS thread manages the DHCP state machine:
+
+```c
+void DHCP_Thread(void *argument)
+{
+    struct netif *netif = (struct netif *)argument;
+
+    for (;;)
+    {
+        switch (DHCP_state)
+        {
+        case DHCP_START:
+            netifapi_dhcp_start(netif);
+            DHCP_state = DHCP_WAIT_ADDRESS;
+            break;
+
+        case DHCP_WAIT_ADDRESS:
+            if (dhcp_supplied_address(netif))
+            {
+                DHCP_state = DHCP_ADDRESS_ASSIGNED;
+            }
+            else if (dhcp->tries > MAX_DHCP_TRIES)
+            {
+                /* Fall back to static address */
+                netifapi_netif_set_addr(netif, &ipaddr, &netmask, &gw);
+                DHCP_state = DHCP_TIMEOUT;
+            }
+            break;
+
+        case DHCP_LINK_DOWN:
+            DHCP_state = DHCP_OFF;
+            break;
+
+        default:
+            break;
+        }
+        osDelay(500);
+    }
+}
+```
+
+## lwipopts.h configuration
+
+Each project provides an `lwipopts.h` that overrides LwIP defaults. Common settings:
+
+```c
+/* Memory */
+#define MEM_SIZE                        (10 * 1024)
+#define MEMP_NUM_PBUF                   10
+#define MEMP_NUM_TCP_SEG                12
+
+/* TCP */
+#define TCP_MSS                         1460
+#define TCP_WND                         (4 * TCP_MSS)
+#define TCP_SND_BUF                     (4 * TCP_MSS)
+
+/* RTOS integration */
+#define NO_SYS                          0       /* use OS */
+#define LWIP_NETIF_LINK_CALLBACK        1
+#define LWIP_DHCP                       1
+```
+
+<Warning>
+The `NO_SYS 0` setting requires FreeRTOS (or another RTOS) to be present. If you set `NO_SYS 1` for bare-metal polling, you must call `ethernetif_input()` and `sys_check_timeouts()` periodically from your main loop and cannot use the netconn or socket APIs.
+</Warning>
+
+## Cache coherency
+
+<Warning>
+All buffers accessed by Ethernet DMA must be L1 cache-line aligned (32 bytes) and placed in non-TCM SRAM. The example uses `__ALIGNED(32)` on receive buffers and places DMA descriptors at fixed addresses in D2 SRAM. Failure to follow this results in corrupted frames.
+</Warning>
+
+## Reference example
+
+<Card title="LwIP_HTTP_Server_Netconn_RTOS" icon="globe">
+  HTTP server with static and dynamic pages (RTOS task list), DHCP support, and Ethernet link monitoring. Tested on NUCLEO-H743ZI with a LAN8742 PHY and Google Chrome v55+.
+
+  `Projects/NUCLEO-H743ZI/Applications/LwIP/LwIP_HTTP_Server_Netconn_RTOS/`
+</Card>
+
+## Further reading
+
+- UM1713 — *STM32Cube interfacing with LwIP and applications*
+- AN4838 — *Managing memory protection unit (MPU) in STM32 MCUs*

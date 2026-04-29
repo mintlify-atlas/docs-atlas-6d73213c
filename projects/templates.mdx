@@ -1,0 +1,239 @@
+---
+title: "Project templates for new STM32H7 applications"
+description: "Use the STM32CubeH7 HAL and LL templates as the starting point for new projects — pre-wired with clock config, MPU setup, cache enable, and linker scripts."
+---
+
+The `Templates/` and `Templates_LL/` directories provide the minimum viable project skeleton for the STM32H7 family. Rather than starting from a blank IDE project and manually wiring up clock configuration, MPU regions, and cache initialization, you copy one of these templates and add your application code on top.
+
+## What a template includes
+
+Both the HAL template (`Templates/`) and the LL template (`Templates_LL/`) on NUCLEO-H743ZI provide the following files:
+
+<Tabs>
+  <Tab title="HAL template">
+    ```text
+    Templates/
+    ├── Src/
+    │   ├── main.c                   # Application entry point
+    │   ├── system_stm32h7xx.c       # CMSIS SystemInit and SystemCoreClock
+    │   ├── stm32h7xx_it.c           # Default interrupt handlers
+    │   └── stm32h7xx_hal_msp.c      # HAL MSP init/deinit hooks
+    ├── Inc/
+    │   ├── main.h
+    │   ├── stm32h7xx_hal_conf.h     # HAL module enable switches
+    │   ├── stm32h7xx_it.h
+    │   └── stm32h7xx_nucleo_conf.h  # BSP board configuration
+    ├── EWARM/
+    │   ├── Project.ewp / .ewd / .eww
+    │   ├── startup_stm32h743xx.s
+    │   ├── stm32h743xx_flash_dtcmram.icf
+    │   └── stm32h743xx_flash_ram_d1.icf
+    ├── MDK-ARM/
+    │   ├── Project.uvprojx / .uvoptx
+    │   └── startup_stm32h743xx.s
+    └── STM32CubeIDE/
+        ├── .project / .cproject
+        ├── STM32H743ZITx_FLASH_DTCMRAM.ld
+        └── STM32H743ZITx_FLASH_RAM_D1.ld
+    ```
+  </Tab>
+  <Tab title="LL template">
+    ```text
+    Templates_LL/
+    ├── Src/
+    │   ├── main.c                   # Entry point using LL API only
+    │   ├── system_stm32h7xx.c
+    │   └── stm32h7xx_it.c
+    ├── Inc/
+    │   ├── main.h
+    │   └── stm32h7xx_it.h
+    ├── EWARM/   (same linker scripts as HAL template)
+    ├── MDK-ARM/
+    └── STM32CubeIDE/
+    ```
+
+    The LL template omits `stm32h7xx_hal_msp.c` and `stm32h7xx_hal_conf.h` because no HAL modules are used.
+  </Tab>
+</Tabs>
+
+## HAL template main.c anatomy
+
+The HAL `main.c` skeleton contains four mandatory setup calls before any application code:
+
+```c
+int main(void)
+{
+  /* 1. Configure MPU — catch-all region prevents speculative access */
+  MPU_Config();
+
+  /* 2. Enable L1 I-Cache and D-Cache */
+  CPU_CACHE_Enable();
+
+  /* 3. Initialize HAL (SysTick to 1 ms, NVIC group priority = 4) */
+  HAL_Init();
+
+  /* 4. Configure PLL1 → 400 MHz SYSCLK, 200 MHz HCLK, 100 MHz APBx */
+  SystemClock_Config();
+
+  /* Add your application code here */
+  BSP_LED_Init(LED1);
+  BSP_LED_Init(LED2);
+  BSP_LED_Init(LED3);
+
+  while (1)
+  {
+    BSP_LED_Off(LED3);
+    BSP_LED_On(LED1);
+    HAL_Delay(100);
+    BSP_LED_Off(LED1);
+    BSP_LED_On(LED2);
+    HAL_Delay(100);
+    BSP_LED_Off(LED2);
+    BSP_LED_On(LED3);
+    HAL_Delay(100);
+  }
+}
+```
+
+The LED sequencing in the infinite loop is only there to confirm the board is running; replace it with your own code.
+
+## Clock configuration (HAL vs LL)
+
+Both templates configure the same clock tree — HSE bypass at 8 MHz, PLL1 with M=4 N=400 P=2, yielding 400 MHz SYSCLK — but express it differently:
+
+<Tabs>
+  <Tab title="HAL SystemClock_Config">
+    ```c
+    /* Templates/Src/main.c */
+    static void SystemClock_Config(void)
+    {
+      RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+      RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+      __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+      while (!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+
+      RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+      RCC_OscInitStruct.HSEState       = RCC_HSE_BYPASS;
+      RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
+      RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+      RCC_OscInitStruct.PLL.PLLM       = 4;
+      RCC_OscInitStruct.PLL.PLLN       = 400;
+      RCC_OscInitStruct.PLL.PLLP       = 2;
+      RCC_OscInitStruct.PLL.PLLQ       = 4;
+      RCC_OscInitStruct.PLL.PLLR       = 2;
+      RCC_OscInitStruct.PLL.PLLVCOSEL  = RCC_PLL1VCOWIDE;
+      RCC_OscInitStruct.PLL.PLLRGE     = RCC_PLL1VCIRANGE_1;
+      HAL_RCC_OscConfig(&RCC_OscInitStruct);
+
+      RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK
+                                       | RCC_CLOCKTYPE_D1PCLK1 | RCC_CLOCKTYPE_PCLK1
+                                       | RCC_CLOCKTYPE_PCLK2   | RCC_CLOCKTYPE_D3PCLK1;
+      RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+      RCC_ClkInitStruct.SYSCLKDivider  = RCC_SYSCLK_DIV1;
+      RCC_ClkInitStruct.AHBCLKDivider  = RCC_HCLK_DIV2;
+      RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV2;
+      RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
+      RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
+      RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
+      HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4);
+    }
+    ```
+  </Tab>
+  <Tab title="LL SystemClock_Config">
+    ```c
+    /* Templates_LL/Src/main.c */
+    static void SystemClock_Config(void)
+    {
+      LL_PWR_SetRegulVoltageScaling(LL_PWR_REGU_VOLTAGE_SCALE1);
+      while (LL_PWR_IsActiveFlag_VOS() == 0) {}
+
+      LL_RCC_HSE_EnableBypass();
+      LL_RCC_HSE_Enable();
+      while (LL_RCC_HSE_IsReady() != 1) {}
+
+      LL_FLASH_SetLatency(LL_FLASH_LATENCY_4);
+
+      LL_RCC_PLL_SetSource(LL_RCC_PLLSOURCE_HSE);
+      LL_RCC_PLL1_SetM(4);
+      LL_RCC_PLL1_SetN(400);
+      LL_RCC_PLL1_SetP(2);
+      LL_RCC_PLL1_SetQ(4);
+      LL_RCC_PLL1_SetR(2);
+      LL_RCC_PLL1_Enable();
+      while (LL_RCC_PLL1_IsReady() != 1) {}
+
+      LL_RCC_SetSysPrescaler(LL_RCC_SYSCLK_DIV_1);
+      LL_RCC_SetAHBPrescaler(LL_RCC_AHB_DIV_2);
+      LL_RCC_SetAPB1Prescaler(LL_RCC_APB1_DIV_2);
+      LL_RCC_SetAPB2Prescaler(LL_RCC_APB2_DIV_2);
+      LL_RCC_SetAPB4Prescaler(LL_RCC_APB4_DIV_2);
+
+      LL_RCC_SetSysClkSource(LL_RCC_SYS_CLKSOURCE_PLL1);
+      while (LL_RCC_GetSysClkSource() != LL_RCC_SYS_CLKSOURCE_STATUS_PLL1) {}
+
+      SysTick_Config(400000000 / 1000);
+      SystemCoreClock = 400000000;
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Templates vs Templates_LL
+
+| Aspect | `Templates/` (HAL) | `Templates_LL/` |
+|---|---|---|
+| Init API | `HAL_Init()`, `HAL_RCC_OscConfig()` | `LL_PWR_*`, `LL_RCC_*` directly |
+| Peripheral access | `HAL_GPIO_WritePin()`, `HAL_UART_Transmit()` | `LL_GPIO_SetOutputPin()`, `LL_USART_TransmitData8()` |
+| Interrupt handling | `HAL_*_IRQHandler()` callbacks | Direct IRQ handlers with LL status checks |
+| Code size | Larger (HAL abstraction layers) | Smaller (no HAL overhead) |
+| Portability | Easier to port between STM32 families | Requires register-level knowledge |
+| MSP hooks | Includes `stm32h7xx_hal_msp.c` | Not present |
+
+<Tip>
+If you are unsure which template to start from, use `Templates/` (HAL). The HAL template integrates more easily with STM32CubeMX code generation, BSP drivers, and middleware that expects HAL callbacks. Switch to `Templates_LL/` only when you have a specific code-size or latency requirement that HAL cannot meet.
+</Tip>
+
+## How to start a new project from a template
+
+<Steps>
+  <Step title="Copy the template directory">
+    Copy the entire template folder to your workspace. Do not modify files inside `Projects/` directly — keep the original as a clean reference.
+
+    ```bash
+    cp -r Projects/NUCLEO-H743ZI/Templates/ ~/my_project/
+    ```
+  </Step>
+  <Step title="Open the IDE project file">
+    Open the project file for your toolchain:
+
+    - **STM32CubeIDE**: Import via **File → Import → Existing Projects into Workspace**, point at `STM32CubeIDE/`
+    - **Keil µVision**: Open `MDK-ARM/Project.uvprojx`
+    - **IAR EWARM**: Open `EWARM/Project.eww`
+  </Step>
+  <Step title="Choose a linker script (RAM placement)">
+    Select whether your default RAM region is DTCM or D1-AXI SRAM. Both linker scripts are included in the template.
+
+    | Region | Address | STM32CubeIDE `.ld` | EWARM `.icf` |
+    |---|---|---|---|
+    | DTCM RAM | `0x20000000` | `STM32H743ZITx_FLASH_DTCMRAM.ld` | `stm32h743xx_flash_dtcmram.icf` |
+    | D1 AXI-SRAM | `0x24000000` | `STM32H743ZITx_FLASH_RAM_D1.ld` | `stm32h743xx_flash_ram_d1.icf` |
+  </Step>
+  <Step title="Add your application code">
+    Replace the LED sequencing loop in `main.c` with your own code. The four setup calls (`MPU_Config`, `CPU_CACHE_Enable`, `HAL_Init`, `SystemClock_Config`) should remain in order at the top of `main()`.
+  </Step>
+  <Step title="Enable HAL modules as needed">
+    Open `Inc/stm32h7xx_hal_conf.h` and uncomment the `#define HAL_<MODULE>_MODULE_ENABLED` lines for the peripherals your application uses.
+
+    ```c
+    /* stm32h7xx_hal_conf.h — enable required modules */
+    #define HAL_UART_MODULE_ENABLED
+    #define HAL_SPI_MODULE_ENABLED
+    /* #define HAL_CAN_MODULE_ENABLED */   /* leave commented if unused */
+    ```
+  </Step>
+</Steps>
+
+<Note>
+The template's `MPU_Config()` function sets up a catch-all 4 GB region with no-access/strongly-ordered attributes (subregion disable `0x87`) as a baseline. This prevents the CPU from speculatively fetching from unmapped addresses. If your application uses DMA or MDMA to access non-TCM SRAM (for example D1 AXI-SRAM at `0x24000000`), add an additional MPU region marked as Normal, not shareable, with appropriate cache policy to ensure coherence.
+</Note>

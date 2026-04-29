@@ -1,0 +1,93 @@
+---
+title: "STM32H7 middleware application projects"
+description: "Explore FreeRTOS, LwIP, FatFs, USB Device/Host, OpenAMP, display, and external memory execution applications across STM32H7 evaluation boards."
+---
+
+The `Applications/` directory in each board folder contains projects that integrate one or more middleware stacks with the HAL drivers. Unlike examples, which focus on a single peripheral in isolation, applications demonstrate realistic use cases: a TCP/IP web server, a USB mass-storage device, a multi-task RTOS application, or code executing from external flash.
+
+## NUCLEO-H743ZI applications
+
+`Projects/NUCLEO-H743ZI/Applications/` contains four middleware categories:
+
+<CardGroup cols={2}>
+  <Card title="EEPROM emulation" icon="database">
+    `EEPROM/EEPROM_Emulation` — emulates an EEPROM in the STM32H743 internal flash using a wear-leveling page-swap algorithm. Useful when you need non-volatile key-value storage without an external I2C EEPROM component.
+  </Card>
+  <Card title="FatFS on SD card" icon="sd-card">
+    `FatFS/FatFS_uSD_Standalone` — mounts a FAT filesystem on a microSD card using the FatFs middleware and the BSP SD driver. Demonstrates file create, read, write, and close operations in a bare-metal (no RTOS) loop.
+  </Card>
+  <Card title="FreeRTOS" icon="list-check">
+    Three projects: `FreeRTOS_ThreadCreation`, `FreeRTOS_SemaphoreFromISR`, and `FreeRTOS_MPU`. Together they cover task creation, inter-task synchronization from an interrupt context, and running tasks under FreeRTOS MPU protection.
+  </Card>
+  <Card title="LwIP HTTP server" icon="globe">
+    `LwIP/LwIP_HTTP_Server_Netconn_RTOS` — a FreeRTOS-based HTTP server using the LwIP netconn API over Ethernet. The board listens on port 80 and serves a static web page from internal flash. Requires a physical Ethernet cable.
+  </Card>
+</CardGroup>
+
+## STM32H747I-DISCO applications
+
+`Projects/STM32H747I-DISCO/Applications/` targets the dual-core Cortex-M7/M4 Discovery kit and emphasizes inter-core communication and USB:
+
+<CardGroup cols={2}>
+  <Card title="FPU benchmark" icon="calculator">
+    `FPU/` — measures floating-point unit throughput using single- and double-precision operations. Shows how to enable the FPU via `SCB->CPACR` and compares throughput with and without compiler FPU flags.
+  </Card>
+  <Card title="FreeRTOS hardware semaphore sync" icon="lock">
+    `FreeRTOS/FreeRTOS_HwSemaphoreCoreSync` — uses the STM32H7 hardware semaphore (HSEM) peripheral to synchronize FreeRTOS tasks running on both Cortex-M7 and Cortex-M4 cores simultaneously.
+  </Card>
+  <Card title="OpenAMP inter-core messaging" icon="arrows-left-right">
+    Two projects: `OpenAMP/OpenAMP_PingPong` and `OpenAMP/OpenAMP_RTOS_PingPong`. Both use the OpenAMP framework (virtio + rpmsg) over shared SRAM to pass messages between the M7 and M4 cores. The RTOS variant runs each endpoint in a FreeRTOS task.
+  </Card>
+  <Card title="ResourcesManager" icon="share-nodes">
+    `ResourcesManager/` — demonstrates the STM32H7 resource manager middleware for arbitrating shared peripheral access between the two cores at runtime.
+  </Card>
+  <Card title="USB Device" icon="usb">
+    Four class implementations: `HID_Standalone` (mouse/keyboard), `CustomHID_Standalone` (vendor-defined HID), `MSC_Standalone` (mass-storage over internal flash), and `DFU_Standalone` (firmware upgrade via DFU class).
+  </Card>
+  <Card title="USB Host" icon="plug">
+    USB Host stack examples for enumeration and class drivers. Requires a USB-A OTG cable and a connected device.
+  </Card>
+</CardGroup>
+
+## STM32H7B3I-DK applications
+
+`Projects/STM32H7B3I-DK/Applications/` covers display output, external memory execution, hardware display protection, and additional USB and filesystem stacks:
+
+<CardGroup cols={2}>
+  <Card title="Display (LTDC)" icon="display">
+    `Display/LTDC_PicturesFromSDCard` — reads JPEG images from an SD card and renders them to the on-board LCD using the LTDC controller and FatFs. `LTDC_AnimatedPictureFromSDCard` extends this with sequential frame display to produce basic animation.
+  </Card>
+  <Card title="ExtMem_CodeExecution" icon="memory">
+    `ExtMem_Boot` plus `ExtMem_Application` — a two-stage loader that boots from internal flash, configures the OCTOSPI/FMC external memory interface, and then jumps to application code stored in external NOR flash or PSRAM. Essential for projects where the application exceeds the internal flash capacity.
+  </Card>
+  <Card title="FatFs" icon="folder-open">
+    `FatFs/` — FatFs filesystem access over the on-board SD card interface, demonstrating multi-sector read/write and directory enumeration.
+  </Card>
+  <Card title="FreeRTOS" icon="list-check">
+    FreeRTOS task management and synchronization examples on the STM32H7B3 SoC.
+  </Card>
+  <Card title="HDP (Hide Protection)" icon="shield">
+    `HDP/` — demonstrates the STM32H7B3 Hide Protection feature, which prevents read-back of selected flash sectors even from privileged code.
+  </Card>
+  <Card title="USB Device & Host" icon="usb">
+    USB Device and USB Host class drivers, including MSC and HID, using the on-board USB connectors.
+  </Card>
+</CardGroup>
+
+## Applications requiring separate download
+
+<Warning>
+Several middleware stacks are not included in the STM32CubeH7 GitHub repository because they are covered by separate license agreements. You must download them from [st.com](https://www.st.com) and install them into the `Middlewares/ST/` tree before building:
+
+- **STemWin** — STMicroelectronics' SEGGER emWin-based GUI library
+- **TouchGFX** — vector graphics framework for high-resolution displays
+- **Audio** — PDM microphone and audio codec stacks
+
+The corresponding project folders exist in the repository but their source files are absent. The build will fail until the middleware packages are installed from st.com.
+</Warning>
+
+## Clock and domain configuration note
+
+<Note>
+All STM32H747I-DISCO application projects configure the Cortex-M7 core to run from PLL1 at 400 MHz and the Cortex-M4 core from PLL2 at 200 MHz. The `SystemClock_Config()` in each application's `main.c` reflects this dual-domain setup. If you port an application from NUCLEO-H743ZI (single-core), review the clock tree configuration carefully — the domain prescalers (D1, D2, D3) and the second PLL setup differ.
+</Note>

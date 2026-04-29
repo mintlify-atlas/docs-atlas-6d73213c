@@ -1,0 +1,231 @@
+---
+title: "FreeRTOS real-time OS integration with STM32H7"
+description: "FreeRTOS V10 on STM32H7 with CMSIS-RTOS2: task creation, semaphores, queues, mutexes, MPU support, and D-cache coherency guidance for Cortex-M7 targets."
+---
+
+STM32CubeH7 bundles FreeRTOS Kernel V10.6.2 as a third-party submodule at `Middlewares/Third_Party/FreeRTOS/`. ST provides a CMSIS-RTOS2 wrapper on top of the native FreeRTOS API so the same application code can run across different RTOS backends. The kernel is configured through `FreeRTOSConfig.h`, which each example project places under its `Inc/` directory.
+
+## Directory layout
+
+```
+Middlewares/Third_Party/FreeRTOS/
+├── Source/
+│   ├── include/          # FreeRTOS kernel headers
+│   ├── portable/         # Cortex-M port (GCC, IAR, MDK)
+│   └── CMSIS_RTOS_V2/    # CMSIS-RTOS2 wrapper (cmsis_os2.c)
+```
+
+<Note>
+The FreeRTOS submodule directory is empty until you initialise submodules with `git submodule update --init`. The headers and source files are present after initialisation.
+</Note>
+
+## Key FreeRTOSConfig.h settings
+
+The NUCLEO-H743ZI examples configure the kernel as follows (`FreeRTOS_ThreadCreation/Inc/FreeRTOSConfig.h`):
+
+```c
+#define configUSE_PREEMPTION              1
+#define configCPU_CLOCK_HZ                ( SystemCoreClock )
+#define configTICK_RATE_HZ                ((TickType_t)1000)
+#define configMAX_PRIORITIES              ( 56 )
+#define configMINIMAL_STACK_SIZE          ((uint16_t)128)
+#define configTOTAL_HEAP_SIZE             ((size_t)( 2 * 1024 ))
+#define configUSE_MUTEXES                 1
+#define configUSE_RECURSIVE_MUTEXES       1
+#define configUSE_COUNTING_SEMAPHORES     1
+#define configUSE_TIMERS                  1
+#define USE_FreeRTOS_HEAP_4               /* heap_4 allocator */
+```
+
+The CMSIS-RTOS2 flags are also set so that `osThreadSuspend`, event flags from ISR, timers, and mutexes are all available.
+
+## Getting started
+
+<Steps>
+  <Step title="Add FreeRTOS source files to your project">
+    Include `FreeRTOS.c`, `tasks.c`, `queue.c`, `timers.c`, `list.c`, and the Cortex-M7 port (`port.c` from `portable/GCC/ARM_CM7/r0p1/`). Add the CMSIS-RTOS2 wrapper `CMSIS_RTOS_V2/cmsis_os2.c` if you want the CMSIS API.
+  </Step>
+  <Step title="Copy and configure FreeRTOSConfig.h">
+    Copy `FreeRTOSConfig.h` from one of the reference examples and adjust `configTOTAL_HEAP_SIZE`, `configTICK_RATE_HZ`, and interrupt priority macros for your application.
+  </Step>
+  <Step title="Redirect the HAL time base away from SysTick">
+    FreeRTOS takes over SysTick. Configure a general-purpose timer (TIM6 in the examples) as the HAL time base source so that `HAL_Delay()` remains functional.
+  </Step>
+  <Step title="Initialise the kernel and create tasks">
+    Call `osKernelInitialize()`, create your threads, then call `osKernelStart()`. Control never returns from `osKernelStart()`.
+  </Step>
+</Steps>
+
+## Thread creation example
+
+The `FreeRTOS_ThreadCreation` example (`Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_ThreadCreation/`) creates two LED-toggling threads using the CMSIS-RTOS2 API:
+
+```c
+#include "cmsis_os2.h"
+#include "FreeRTOS.h"
+
+osThreadId_t THREAD1Handle;
+osThreadId_t THREAD2Handle;
+
+static osThreadAttr_t attr = {
+    .priority   = osPriorityNormal,
+    .stack_size = configMINIMAL_STACK_SIZE,
+};
+
+static void LED_Thread1(void *argument)
+{
+    for (;;)
+    {
+        BSP_LED_Toggle(LED1);
+        osDelay(200);
+    }
+}
+
+static void LED_Thread2(void *argument)
+{
+    for (;;)
+    {
+        BSP_LED_Toggle(LED2);
+        osDelay(500);
+    }
+}
+
+int main(void)
+{
+    HAL_Init();
+    SystemClock_Config();
+
+    osKernelInitialize();
+
+    attr.name = "THREAD1";
+    THREAD1Handle = osThreadNew(LED_Thread1, NULL, &attr);
+
+    attr.name = "THREAD2";
+    THREAD2Handle = osThreadNew(LED_Thread2, NULL, &attr);
+
+    osKernelStart();  /* never returns */
+    while (1) {}
+}
+```
+
+<Tip>
+Use `osThreadSuspend()` and `osThreadResume()` to coordinate threads without a shared variable. The `FreeRTOS_ThreadCreation` example demonstrates a 15-second cycle where threads take turns suspending each other.
+</Tip>
+
+## Semaphores
+
+The `FreeRTOS_SemaphoreFromISR` example (`Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_SemaphoreFromISR/`) shows how to release a semaphore from a GPIO EXTI callback and acquire it inside a task:
+
+```c
+osSemaphoreId_t osSemaphore;
+
+/* In main(), before osKernelStart() */
+osSemaphore = osSemaphoreNew(1U, 1U, NULL);
+
+/* Task: waits for the semaphore */
+static void SemaphoreTest(void *argument)
+{
+    for (;;)
+    {
+        if (osSemaphoreAcquire(osSemaphore, 0) == osOK)
+        {
+            BSP_LED_Toggle(LED1);
+        }
+    }
+}
+
+/* GPIO EXTI callback: releases the semaphore from ISR */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    osSemaphoreRelease(osSemaphore);
+}
+```
+
+<Warning>
+Only call interrupt-safe FreeRTOS API functions (ending in `FromISR`) from ISRs. The CMSIS-RTOS2 wrapper's `osSemaphoreRelease()` is ISR-safe, but `osSemaphoreAcquire()` with a non-zero timeout must not be called from an ISR.
+</Warning>
+
+## Inter-task synchronisation primitives
+
+<Tabs>
+  <Tab title="Queue">
+    ```c
+    osMessageQueueId_t msgQueue;
+
+    /* Create a queue of 16 uint32_t items */
+    msgQueue = osMessageQueueNew(16, sizeof(uint32_t), NULL);
+
+    /* Producer task */
+    uint32_t value = 42;
+    osMessageQueuePut(msgQueue, &value, 0, osWaitForever);
+
+    /* Consumer task */
+    uint32_t received;
+    osMessageQueueGet(msgQueue, &received, NULL, osWaitForever);
+    ```
+  </Tab>
+  <Tab title="Mutex">
+    ```c
+    osMutexId_t myMutex;
+
+    /* Create a mutex */
+    myMutex = osMutexNew(NULL);
+
+    /* Acquire before accessing shared resource */
+    osMutexAcquire(myMutex, osWaitForever);
+    /* ... access shared resource ... */
+    osMutexRelease(myMutex);
+    ```
+  </Tab>
+  <Tab title="Software timer">
+    ```c
+    osTimerId_t myTimer;
+
+    void TimerCallback(void *arg)
+    {
+        BSP_LED_Toggle(LED1);
+    }
+
+    /* One-shot timer, 500 ms period */
+    myTimer = osTimerNew(TimerCallback, osTimerPeriodic, NULL, NULL);
+    osTimerStart(myTimer, 500);
+    ```
+  </Tab>
+</Tabs>
+
+## MPU support
+
+The `FreeRTOS_MPU` example (`Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_MPU/`) demonstrates unprivileged tasks created with `xTaskCreateRestricted()`. A privileged `MainTask` monitors for `MemManage` faults and can recover or suspend the offending task up to a configurable `EXAMPLE_FAULT_COUNT_THRESHOLD`. Enable MPU support by setting `configENABLE_MPU 1` in `FreeRTOSConfig.h`.
+
+## Cache coherency on STM32H7
+
+<Warning>
+The Cortex-M7 L1 cache is enabled in all reference examples (`SCB_EnableICache()` and `SCB_EnableDCache()`). Buffers shared between the CPU and DMA masters must be placed in non-TCM SRAM (for example D1 AXI-SRAM at `0x24000000`) and aligned to the 32-byte L1 cache line size. Use the MPU or explicit cache maintenance (`SCB_CleanDCache_by_Addr`) where necessary.
+</Warning>
+
+## Reference examples
+
+<CardGroup cols={2}>
+  <Card title="FreeRTOS_ThreadCreation" icon="list-tree">
+    Two CMSIS-RTOS2 threads toggling LEDs with `osDelay`. NUCLEO-H743ZI.
+    `Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_ThreadCreation/`
+  </Card>
+  <Card title="FreeRTOS_SemaphoreFromISR" icon="bolt">
+    Semaphore released from a GPIO EXTI ISR. NUCLEO-H743ZI.
+    `Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_SemaphoreFromISR/`
+  </Card>
+  <Card title="FreeRTOS_MPU" icon="shield">
+    Privileged and unprivileged tasks with MemManage fault recovery. NUCLEO-H743ZI.
+    `Projects/NUCLEO-H743ZI/Applications/FreeRTOS/FreeRTOS_MPU/`
+  </Card>
+  <Card title="LwIP HTTP Server (RTOS)" icon="globe">
+    FreeRTOS combined with LwIP networking. NUCLEO-H743ZI.
+    `Projects/NUCLEO-H743ZI/Applications/LwIP/LwIP_HTTP_Server_Netconn_RTOS/`
+  </Card>
+</CardGroup>
+
+## Further reading
+
+- UM1722 — *Developing Applications on STM32Cube with RTOS*
+- AN4838 — *Managing memory protection unit (MPU) in STM32 MCUs*
+- AN4839 — *Level 1 cache on STM32F7/H7 Series*

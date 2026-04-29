@@ -1,0 +1,230 @@
+---
+title: "HAL ADC driver — analog-to-digital conversion API"
+description: "Configure ADC1/2 (up to 16-bit) and ADC3 (12-bit) on STM32H7 with polling, interrupt, and DMA transfer modes using the HAL ADC driver."
+---
+
+The STM32H7 HAL ADC driver provides a unified API for all three ADC instances. ADC1 and ADC2 support up to 16-bit resolution and are clocked from the AHB bus or an internal PLL, while ADC3 is a 12-bit converter attached to the D3 power domain and remains available in low-power modes. Before starting conversions, run `HAL_ADCEx_Calibration_Start` to correct gain and offset errors — this is especially important at 16-bit resolution.
+
+<Note>
+ADC1 and ADC2 share a common clock prescaler and can operate in dual mode (interleaved or simultaneous). ADC3 has an independent clock and is the only ADC accessible from the D3 domain when the CPU is in Stop mode.
+</Note>
+
+## ADC_InitTypeDef
+
+Configure the `Init` field of `ADC_HandleTypeDef` before calling `HAL_ADC_Init`.
+
+<ParamField path="Init.ClockPrescaler" type="uint32_t" required>
+  ADC kernel clock source and divider. Use `ADC_CLOCK_ASYNC_DIV1..256` for the asynchronous PLL clock or `ADC_CLOCK_SYNC_PCLK_DIV2..4` for the synchronous AHB clock. Asynchronous mode decouples the ADC clock from the CPU clock, reducing noise on sensitive measurements.
+</ParamField>
+
+<ParamField path="Init.Resolution" type="uint32_t" required>
+  Conversion resolution. ADC1/2 accept `ADC_RESOLUTION_16B`, `ADC_RESOLUTION_14B`, `ADC_RESOLUTION_12B`, `ADC_RESOLUTION_10B`, or `ADC_RESOLUTION_8B`. ADC3 is limited to `ADC_RESOLUTION_12B` and below.
+</ParamField>
+
+<ParamField path="Init.ScanConvMode" type="FunctionalState" default="DISABLE">
+  Enable (`ENABLE`) to convert a sequence of channels in rank order. Disable (`DISABLE`) for single-channel conversions only.
+</ParamField>
+
+<ParamField path="Init.EOCSelection" type="uint32_t" default="ADC_EOC_SINGLE_CONV">
+  Controls when the EOC (end-of-conversion) flag is set. `ADC_EOC_SINGLE_CONV` sets the flag after each channel; `ADC_EOC_SEQ_CONV` sets it only after the full sequence.
+</ParamField>
+
+<ParamField path="Init.LowPowerAutoWait" type="FunctionalState" default="DISABLE">
+  When enabled, the ADC halts after each conversion and waits until the data register is read before starting the next conversion. Prevents overrun without requiring DMA.
+</ParamField>
+
+<ParamField path="Init.ContinuousConvMode" type="FunctionalState" default="DISABLE">
+  When enabled, the ADC automatically restarts after completing a sequence. When disabled, a software or hardware trigger is required for each conversion.
+</ParamField>
+
+<ParamField path="Init.NbrOfConversion" type="uint32_t" default="1">
+  Number of channels in the regular conversion sequence. Range: 1–16. Ignored when `ScanConvMode` is disabled.
+</ParamField>
+
+<ParamField path="Init.DiscontinuousConvMode" type="FunctionalState" default="DISABLE">
+  When enabled, each trigger converts only `NbrOfDiscConversion` channels from the sequence, then pauses until the next trigger.
+</ParamField>
+
+<ParamField path="Init.ExternalTrigConv" type="uint32_t" default="ADC_SOFTWARE_START">
+  Hardware trigger source for starting conversions. Use `ADC_SOFTWARE_START` for software-triggered conversions, or any `ADC_EXTERNALTRIG_T*_*` constant to synchronize with a timer.
+</ParamField>
+
+<ParamField path="Init.ExternalTrigConvEdge" type="uint32_t" default="ADC_EXTERNALTRIGCONVEDGE_NONE">
+  Trigger edge sensitivity: `ADC_EXTERNALTRIGCONVEDGE_RISING`, `ADC_EXTERNALTRIGCONVEDGE_FALLING`, or `ADC_EXTERNALTRIGCONVEDGE_RISINGFALLING`. Ignored when `ExternalTrigConv` is `ADC_SOFTWARE_START`.
+</ParamField>
+
+<ParamField path="Init.ConversionDataManagement" type="uint32_t" default="ADC_CONVERSIONDATA_DR">
+  Destination for conversion results. `ADC_CONVERSIONDATA_DR` stores results in the data register only. `ADC_CONVERSIONDATA_DMA_CIRCULAR` or `ADC_CONVERSIONDATA_DMA_ONESHOT` routes results through DMA to a buffer.
+</ParamField>
+
+## ADC_ChannelConfTypeDef
+
+Pass this structure to `HAL_ADC_ConfigChannel` to configure each channel in the sequence.
+
+<ParamField path="Channel" type="uint32_t" required>
+  ADC input channel. Use `ADC_CHANNEL_0`..`ADC_CHANNEL_19` for external pins, or `ADC_CHANNEL_TEMPSENSOR`, `ADC_CHANNEL_VREFINT`, `ADC_CHANNEL_VBAT` for internal channels.
+</ParamField>
+
+<ParamField path="Rank" type="uint32_t" required>
+  Position in the conversion sequence. `ADC_REGULAR_RANK_1` through `ADC_REGULAR_RANK_16`. Channels are converted in ascending rank order.
+</ParamField>
+
+<ParamField path="SamplingTime" type="uint32_t" required>
+  Number of ADC clock cycles used to charge the sampling capacitor. Longer times improve accuracy for high-impedance sources. Valid values: `ADC_SAMPLETIME_1CYCLE_5` through `ADC_SAMPLETIME_810CYCLES_5`.
+</ParamField>
+
+<ParamField path="SingleDiff" type="uint32_t" default="ADC_SINGLE_ENDED">
+  Input mode. `ADC_SINGLE_ENDED` measures the pin voltage against `VREF-`. `ADC_DIFFERENTIAL_ENDED` measures the difference between two adjacent pins (INP and INM), doubling effective resolution for differential sensors.
+</ParamField>
+
+<ParamField path="OffsetNumber" type="uint32_t" default="ADC_OFFSET_NONE">
+  Selects one of four hardware offset registers (`ADC_OFFSET_1`..`ADC_OFFSET_4`) to subtract from conversion results. Use `ADC_OFFSET_NONE` to disable offset correction.
+</ParamField>
+
+<ParamField path="Offset" type="uint32_t" default="0">
+  Signed value subtracted from the raw conversion result when `OffsetNumber` is not `ADC_OFFSET_NONE`. Useful for removing a known DC bias from a sensor signal.
+</ParamField>
+
+## Key functions
+
+| Function | Description |
+|---|---|
+| `HAL_ADC_Init(hadc)` | Apply `Init` settings and enable the ADC peripheral clock. |
+| `HAL_ADC_ConfigChannel(hadc, sConfig)` | Configure one channel in the conversion sequence. |
+| `HAL_ADCEx_Calibration_Start(hadc, calibration_mode, single_diff)` | Run hardware calibration. Call once after `HAL_ADC_Init` and before the first conversion. |
+| `HAL_ADC_Start(hadc)` | Start conversion in polling mode. |
+| `HAL_ADC_PollForConversion(hadc, timeout_ms)` | Block until EOC flag is set or timeout expires. Returns `HAL_OK` or `HAL_TIMEOUT`. |
+| `HAL_ADC_GetValue(hadc)` | Read the conversion result from the data register. Returns `uint32_t`. |
+| `HAL_ADC_Stop(hadc)` | Stop conversions and disable the ADC. |
+| `HAL_ADC_Start_IT(hadc)` | Start conversions with EOC interrupt enabled. |
+| `HAL_ADC_Stop_IT(hadc)` | Stop interrupt-driven conversions. |
+| `HAL_ADC_Start_DMA(hadc, pData, length)` | Start conversions, routing results to a buffer via DMA. |
+| `HAL_ADC_Stop_DMA(hadc)` | Stop DMA-driven conversions. |
+| `HAL_ADC_ConvCpltCallback(hadc)` | Weak callback invoked at end of conversion (interrupt and DMA modes). Override in application code. |
+
+## Conversion modes
+
+<Tabs>
+  <Tab title="Polling">
+    Polling is the simplest approach. The CPU blocks inside `HAL_ADC_PollForConversion` until the result is ready. Use for infrequent, non-time-critical measurements.
+
+    ```c main.c
+    ADC_HandleTypeDef hadc1;
+    ADC_ChannelConfTypeDef sConfig = {0};
+
+    /* 1. Configure ADC1 for a single 16-bit conversion */
+    hadc1.Instance                   = ADC1;
+    hadc1.Init.ClockPrescaler        = ADC_CLOCK_ASYNC_DIV2;
+    hadc1.Init.Resolution            = ADC_RESOLUTION_16B;
+    hadc1.Init.ScanConvMode          = DISABLE;
+    hadc1.Init.EOCSelection          = ADC_EOC_SINGLE_CONV;
+    hadc1.Init.LowPowerAutoWait      = DISABLE;
+    hadc1.Init.ContinuousConvMode    = DISABLE;
+    hadc1.Init.NbrOfConversion       = 1;
+    hadc1.Init.DiscontinuousConvMode = DISABLE;
+    hadc1.Init.ExternalTrigConv      = ADC_SOFTWARE_START;
+    hadc1.Init.ExternalTrigConvEdge  = ADC_EXTERNALTRIGCONVEDGE_NONE;
+    hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DR;
+    hadc1.Init.Overrun               = ADC_OVR_DATA_OVERWRITTEN;
+    hadc1.Init.OversamplingMode      = DISABLE;
+
+    if (HAL_ADC_Init(&hadc1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 2. Configure channel 3 at rank 1 */
+    sConfig.Channel      = ADC_CHANNEL_3;
+    sConfig.Rank         = ADC_REGULAR_RANK_1;
+    sConfig.SamplingTime = ADC_SAMPLETIME_8CYCLES_5;
+    sConfig.SingleDiff   = ADC_SINGLE_ENDED;
+    sConfig.OffsetNumber = ADC_OFFSET_NONE;
+    sConfig.Offset       = 0;
+
+    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 3. Calibrate (offset + linearity correction) */
+    if (HAL_ADCEx_Calibration_Start(&hadc1,
+            ADC_CALIB_OFFSET_LINEARITY,
+            ADC_SINGLE_ENDED) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 4. Trigger, wait, and read */
+    HAL_ADC_Start(&hadc1);
+    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
+    {
+        uint32_t raw = HAL_ADC_GetValue(&hadc1);
+        /* Convert raw to millivolts: (raw * 3300) / 65535 for 16-bit */
+        uint32_t mv = (raw * 3300UL) / 65535UL;
+    }
+    HAL_ADC_Stop(&hadc1);
+    ```
+  </Tab>
+  <Tab title="Interrupt">
+    Interrupt mode frees the CPU during conversion. The HAL calls `HAL_ADC_ConvCpltCallback` when the result is ready.
+
+    ```c main.c
+    /* Start conversion with interrupt */
+    HAL_ADC_Start_IT(&hadc1);
+
+    /* Callback fires for each completed conversion */
+    void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+    {
+        if (hadc->Instance == ADC1)
+        {
+            uint32_t raw = HAL_ADC_GetValue(hadc);
+            /* process raw value */
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="DMA">
+    DMA mode transfers conversion results to a buffer without CPU involvement. Required for high-speed or multi-channel scanning.
+
+    ```c main.c
+    #define ADC_BUF_LEN 16
+
+    /* Place buffer in non-cacheable SRAM or manage cache coherency */
+    uint32_t adc_buf[ADC_BUF_LEN];
+
+    /* ConversionDataManagement must be ADC_CONVERSIONDATA_DMA_CIRCULAR */
+    hadc1.Init.ConversionDataManagement = ADC_CONVERSIONDATA_DMA_CIRCULAR;
+    hadc1.Init.ContinuousConvMode       = ENABLE;
+
+    HAL_ADC_Init(&hadc1);
+    HAL_ADCEx_Calibration_Start(&hadc1,
+        ADC_CALIB_OFFSET_LINEARITY,
+        ADC_SINGLE_ENDED);
+
+    /* Start DMA transfer into buffer */
+    HAL_ADC_Start_DMA(&hadc1, adc_buf, ADC_BUF_LEN);
+
+    /* DMA complete callback */
+    void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+    {
+        /* adc_buf now contains ADC_BUF_LEN fresh samples */
+    }
+    ```
+
+    <Warning>
+      STM32H7 has a data cache. If the DMA buffer is in cacheable SRAM (D1 RAM), call `SCB_InvalidateDCache_by_Addr(adc_buf, sizeof(adc_buf))` before reading the buffer in the callback, or place the buffer in `__attribute__((section(".NonCacheable")))` memory.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## ADC instance capabilities
+
+| Instance | Max resolution | Domain | Notes |
+|---|---|---|---|
+| ADC1 | 16-bit | D2 | Supports differential input, dual mode with ADC2 |
+| ADC2 | 16-bit | D2 | Can operate in parallel with ADC1 in dual mode |
+| ADC3 | 12-bit | D3 | Available in Stop mode; no differential input |
+
+<Tip>
+  Always call `HAL_ADCEx_Calibration_Start` after power-on and after any significant temperature change. The calibration factors are stored in hardware registers and applied automatically to all subsequent conversions.
+</Tip>

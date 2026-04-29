@@ -1,0 +1,141 @@
+---
+title: "STM32CubeH7 project structure and organization"
+description: "A guide to the Projects directory layout, supported IDE toolchains, and available evaluation boards in the STM32CubeH7 firmware package."
+---
+
+The `Projects/` directory is the primary entry point for working with STM32CubeH7 firmware. Each subdirectory maps to a specific evaluation board or Nucleo kit, and within it you will find ready-to-build projects organized by type — examples, applications, demonstrations, and templates — each pre-configured for three major IDEs.
+
+## Directory layout
+
+Every board directory follows the same structure:
+
+```text
+Projects/
+└── <BoardName>/
+    ├── Examples/            # HAL-based peripheral examples
+    ├── Examples_LL/         # Low-layer (LL) driver examples
+    ├── Examples_MIX/        # Examples mixing HAL and LL APIs
+    ├── Applications/        # Middleware integration projects
+    ├── Demonstrations/      # Full-featured demo applications
+    └── Templates/           # Bare skeleton for new projects
+        Templates_LL/        # LL-based bare skeleton
+```
+
+<Note>
+Not every board provides all six subdirectory types. For example, `STM32H747I-DISCO` ships `Applications/`, `Examples/`, and `Templates_LL/` but no HAL-only `Templates/` or `Examples_LL/`. Check the individual board directory before expecting a specific folder.
+</Note>
+
+## Supported boards
+
+<CardGroup cols={2}>
+  <Card title="NUCLEO-H743ZI" icon="microchip">
+    STM32H743ZI Nucleo-144. Full set: Examples, Examples_LL, Applications, Demonstrations, Templates, Templates_LL.
+  </Card>
+  <Card title="NUCLEO-H723ZG" icon="microchip">
+    STM32H723ZG Nucleo-144. Subset of HAL examples and templates.
+  </Card>
+  <Card title="NUCLEO-H745ZI-Q" icon="microchip">
+    Dual-core STM32H745ZI Nucleo-144. Includes dual-core examples.
+  </Card>
+  <Card title="NUCLEO-H753ZI" icon="microchip">
+    STM32H753ZI Nucleo-144 with TrustZone examples.
+  </Card>
+  <Card title="NUCLEO-H755ZI-Q" icon="microchip">
+    Dual-core STM32H755ZI Nucleo-144.
+  </Card>
+  <Card title="NUCLEO-H7A3ZI-Q" icon="microchip">
+    STM32H7A3ZI Nucleo-144. High-performance single-core board.
+  </Card>
+  <Card title="STM32H743I-EVAL" icon="server">
+    Full-featured evaluation board with LCD, Ethernet, audio, and mass storage.
+  </Card>
+  <Card title="STM32H747I-DISCO" icon="display">
+    STM32H747I Discovery kit with DSI display, audio codec, and dual-core Cortex-M7/M4.
+  </Card>
+  <Card title="STM32H745I-DISCO" icon="display">
+    STM32H745I Discovery kit.
+  </Card>
+  <Card title="STM32H750B-DK" icon="display">
+    STM32H750B Discovery kit.
+  </Card>
+  <Card title="STM32H7B3I-DK" icon="display">
+    STM32H7B3I Discovery kit with LTDC display, USB, FatFs, and external memory execution.
+  </Card>
+  <Card title="STM32H735G-DK" icon="display">
+    STM32H735G Discovery kit.
+  </Card>
+</CardGroup>
+
+## Supported IDEs
+
+Every project directory includes toolchain-specific subdirectories with fully configured project files. No manual project setup is required — open the relevant file and build.
+
+<Tabs>
+  <Tab title="STM32CubeIDE">
+    STM32CubeIDE is the recommended Eclipse-based IDE from STMicroelectronics. Project files are stored in `STM32CubeIDE/`.
+
+    ```text
+    Templates/STM32CubeIDE/
+    ├── .project
+    ├── .cproject
+    ├── Example/
+    ├── STM32H743ZITx_FLASH_DTCMRAM.ld
+    └── STM32H743ZITx_FLASH_RAM_D1.ld
+    ```
+
+    Open the project via **File → Import → Existing Projects into Workspace** and point at the `STM32CubeIDE/` folder. Two linker scripts are provided: one places the default RAM region in DTCM RAM (`@0x20000000`) and the other in D1 AXI-SRAM (`@0x24000000`).
+  </Tab>
+  <Tab title="Keil MDK-ARM">
+    Keil MDK-ARM project files are stored in `MDK-ARM/`.
+
+    ```text
+    Templates/MDK-ARM/
+    ├── Project.uvprojx
+    ├── Project.uvoptx
+    └── startup_stm32h743xx.s
+    ```
+
+    Open `Project.uvprojx` directly in Keil µVision. To switch the default RAM target between DTCM and D1-AXI SRAM, go to **Project options → Target** and toggle IRAM1 / IRAM2 accordingly.
+  </Tab>
+  <Tab title="IAR EWARM">
+    IAR Embedded Workbench project files are stored in `EWARM/`.
+
+    ```text
+    Templates/EWARM/
+    ├── Project.ewp
+    ├── Project.ewd
+    ├── Project.eww
+    ├── startup_stm32h743xx.s
+    ├── stm32h743xx_flash_dtcmram.icf
+    └── stm32h743xx_flash_ram_d1.icf
+    ```
+
+    Open `Project.eww` in IAR EWARM. Two `.icf` linker configuration files correspond to DTCM RAM and D1-AXI SRAM placement. Select one via **Project options → Linker → Config**.
+  </Tab>
+</Tabs>
+
+## Project categories explained
+
+| Category | API layer | Purpose |
+|---|---|---|
+| `Examples` | HAL | One peripheral, one concept — easiest starting point |
+| `Examples_LL` | LL (register-level) | Same concepts as HAL examples but using the low-layer API for tighter control |
+| `Examples_MIX` | HAL + LL | Demonstrates mixing both APIs in a single project |
+| `Applications` | HAL + Middleware | Integrates FreeRTOS, LwIP, FatFs, USB, or other middleware stacks |
+| `Demonstrations` | HAL + Middleware | Polished end-to-end demos, often requiring BSP display drivers |
+| `Templates` | HAL | Minimal skeleton; copy this as the starting point for a new project |
+| `Templates_LL` | LL | Same minimal skeleton but using the LL API |
+
+## Repository structure note
+
+STM32CubeH7 uses Git submodules to track shared middleware and driver components. The `Drivers/`, `Middlewares/`, and `Utilities/` directories at the repository root are shared across all board projects. When you clone the repository, initialize submodules to ensure these components are available:
+
+```bash
+git clone https://github.com/STMicroelectronics/STM32CubeH7.git
+cd STM32CubeH7
+git submodule update --init --recursive
+```
+
+<Warning>
+Opening a project from a clone where submodules have not been initialized will result in missing header files and build failures. Always run `git submodule update --init` after cloning.
+</Warning>

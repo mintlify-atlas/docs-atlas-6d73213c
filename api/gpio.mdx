@@ -1,0 +1,312 @@
+---
+title: "HAL GPIO driver — digital I/O for STM32H7"
+description: "Configure and control GPIO pins on STM32H7 using the HAL driver. Covers pin modes, output, input, interrupts, and alternate functions."
+---
+
+The HAL GPIO driver gives you a uniform API to configure every general-purpose I/O pin on STM32H7 devices. It handles direction, pull-up/pull-down resistors, output drive type, slew-rate speed, and alternate-function mapping in a single `HAL_GPIO_Init` call, and provides simple read/write/toggle operations for runtime use.
+
+## GPIO_InitTypeDef
+
+Populate this structure and pass it to `HAL_GPIO_Init` to configure one or more pins on a GPIO port simultaneously.
+
+```c
+GPIO_InitTypeDef GPIO_InitStruct = {0};
+GPIO_InitStruct.Pin   = GPIO_PIN_5;
+GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+GPIO_InitStruct.Pull  = GPIO_NOPULL;
+GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+```
+
+<ParamField path="Pin" type="uint32_t" required>
+  Bitmask of pins to configure. Combine multiple pins with `|`, for example `GPIO_PIN_0 | GPIO_PIN_1`. Use `GPIO_PIN_All` to target every pin on the port.
+</ParamField>
+
+<ParamField path="Mode" type="uint32_t" required>
+  Operating mode for the selected pins. See the [GPIO modes](#gpio-modes) table below.
+</ParamField>
+
+<ParamField path="Pull" type="uint32_t" required>
+  Internal pull resistor configuration.
+
+  | Value | Description |
+  |---|---|
+  | `GPIO_NOPULL` | No pull resistor |
+  | `GPIO_PULLUP` | Internal pull-up |
+  | `GPIO_PULLDOWN` | Internal pull-down |
+</ParamField>
+
+<ParamField path="Speed" type="uint32_t">
+  Output slew-rate. Higher speeds increase EMI; choose the lowest speed that meets your timing requirement.
+
+  | Value | Typical max frequency |
+  |---|---|
+  | `GPIO_SPEED_FREQ_LOW` | ~2 MHz |
+  | `GPIO_SPEED_FREQ_MEDIUM` | ~12 MHz |
+  | `GPIO_SPEED_FREQ_HIGH` | ~50 MHz |
+  | `GPIO_SPEED_FREQ_VERY_HIGH` | ~100 MHz |
+</ParamField>
+
+<ParamField path="Alternate" type="uint32_t">
+  Alternate-function number (0–15) when `Mode` is `GPIO_MODE_AF_PP` or `GPIO_MODE_AF_OD`. Use the `GPIO_AFx_*` constants defined in the device header, for example `GPIO_AF7_USART1`.
+</ParamField>
+
+## GPIO modes
+
+<Accordion title="Input and output modes">
+  | Constant | Description |
+  |---|---|
+  | `GPIO_MODE_INPUT` | High-impedance digital input |
+  | `GPIO_MODE_OUTPUT_PP` | Push-pull output |
+  | `GPIO_MODE_OUTPUT_OD` | Open-drain output (requires external pull-up) |
+  | `GPIO_MODE_ANALOG` | Analog mode — disables digital I/O buffer, use before ADC/DAC |
+</Accordion>
+
+<Accordion title="Alternate-function modes">
+  | Constant | Description |
+  |---|---|
+  | `GPIO_MODE_AF_PP` | Alternate function, push-pull drive |
+  | `GPIO_MODE_AF_OD` | Alternate function, open-drain drive |
+</Accordion>
+
+<Accordion title="External interrupt / event modes">
+  | Constant | Trigger edge | Generates |
+  |---|---|---|
+  | `GPIO_MODE_IT_RISING` | Rising | CPU interrupt |
+  | `GPIO_MODE_IT_FALLING` | Falling | CPU interrupt |
+  | `GPIO_MODE_IT_RISING_FALLING` | Both edges | CPU interrupt |
+  | `GPIO_MODE_EVT_RISING` | Rising | CPU event (WFE) |
+  | `GPIO_MODE_EVT_FALLING` | Falling | CPU event (WFE) |
+  | `GPIO_MODE_EVT_RISING_FALLING` | Both edges | CPU event (WFE) |
+</Accordion>
+
+<Note>
+  Always enable the GPIO port clock with `__HAL_RCC_GPIOx_CLK_ENABLE()` before calling `HAL_GPIO_Init`. Failing to do so will have no visible effect but the register writes will be silently discarded.
+</Note>
+
+## Functions
+
+### HAL_GPIO_Init
+
+Configures one or more GPIO pins on a port according to a `GPIO_InitTypeDef` structure.
+
+```c
+void HAL_GPIO_Init(GPIO_TypeDef *GPIOx, GPIO_InitTypeDef *GPIO_Init);
+```
+
+<ParamField path="GPIOx" type="GPIO_TypeDef *" required>
+  Target port: `GPIOA` … `GPIOK` on STM32H7. The port clock must be enabled before this call.
+</ParamField>
+
+<ParamField path="GPIO_Init" type="GPIO_InitTypeDef *" required>
+  Pointer to an initialised `GPIO_InitTypeDef`. The structure is read-only; you can reuse it for multiple ports after the call.
+</ParamField>
+
+---
+
+### HAL_GPIO_DeInit
+
+Resets the specified pins to their default reset state (input, no pull, analog mode).
+
+```c
+void HAL_GPIO_DeInit(GPIO_TypeDef *GPIOx, uint32_t GPIO_Pin);
+```
+
+<ParamField path="GPIOx" type="GPIO_TypeDef *" required>
+  Target GPIO port.
+</ParamField>
+
+<ParamField path="GPIO_Pin" type="uint32_t" required>
+  Bitmask of pins to reset.
+</ParamField>
+
+---
+
+### HAL_GPIO_ReadPin
+
+Returns the current logic level of a single input or output pin.
+
+```c
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
+```
+
+<ParamField path="GPIOx" type="GPIO_TypeDef *" required>
+  GPIO port.
+</ParamField>
+
+<ParamField path="GPIO_Pin" type="uint16_t" required>
+  Single pin bitmask (e.g. `GPIO_PIN_3`). Pass only one pin at a time.
+</ParamField>
+
+<ResponseField name="return" type="GPIO_PinState">
+  `GPIO_PIN_SET` (1) or `GPIO_PIN_RESET` (0).
+</ResponseField>
+
+---
+
+### HAL_GPIO_WritePin
+
+Drives one or more output pins high or low. Uses the atomic BSRR register — safe to call from an ISR.
+
+```c
+void HAL_GPIO_WritePin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin, GPIO_PinState PinState);
+```
+
+<ParamField path="GPIOx" type="GPIO_TypeDef *" required>
+  GPIO port.
+</ParamField>
+
+<ParamField path="GPIO_Pin" type="uint16_t" required>
+  Bitmask of one or more pins.
+</ParamField>
+
+<ParamField path="PinState" type="GPIO_PinState" required>
+  `GPIO_PIN_SET` to drive high, `GPIO_PIN_RESET` to drive low.
+</ParamField>
+
+---
+
+### HAL_GPIO_TogglePin
+
+Inverts the current output state of one or more pins.
+
+```c
+void HAL_GPIO_TogglePin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
+```
+
+<Warning>
+  `HAL_GPIO_TogglePin` performs a read-modify-write on the ODR register and is **not** atomic. Avoid calling it from multiple ISRs or from an ISR and a thread simultaneously — use `HAL_GPIO_WritePin` (BSRR-based) for atomic single-pin control in concurrent contexts.
+</Warning>
+
+---
+
+### HAL_GPIO_LockPin
+
+Locks the configuration of selected pins until the next reset. After a successful lock, any attempt to modify MODER, OTYPER, OSPEEDR, or PUPDR for those pins has no effect.
+
+```c
+HAL_StatusTypeDef HAL_GPIO_LockPin(GPIO_TypeDef *GPIOx, uint16_t GPIO_Pin);
+```
+
+<ParamField path="GPIOx" type="GPIO_TypeDef *" required>
+  GPIO port.
+</ParamField>
+
+<ParamField path="GPIO_Pin" type="uint16_t" required>
+  Bitmask of pins to lock.
+</ParamField>
+
+<ResponseField name="return" type="HAL_StatusTypeDef">
+  `HAL_OK` if the lock sequence completed; `HAL_ERROR` if the hardware rejected the sequence (verify the pin is not already locked in a conflicting state).
+</ResponseField>
+
+---
+
+### HAL_GPIO_EXTI_IRQHandler
+
+Call this from the EXTIx IRQ handler. It checks and clears the pending EXTI flag, then calls `HAL_GPIO_EXTI_Callback`.
+
+```c
+void HAL_GPIO_EXTI_IRQHandler(uint16_t GPIO_Pin);
+```
+
+<ParamField path="GPIO_Pin" type="uint16_t" required>
+  The pin whose EXTI line fired, e.g. `GPIO_PIN_13`. Passed through to the callback.
+</ParamField>
+
+---
+
+### HAL_GPIO_EXTI_Callback
+
+Weak callback invoked by `HAL_GPIO_EXTI_IRQHandler` after the pending flag is cleared. Override this in your application to handle the interrupt.
+
+```c
+__weak void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);
+```
+
+<ParamField path="GPIO_Pin" type="uint16_t" required>
+  The pin that triggered the EXTI interrupt.
+</ParamField>
+
+## Complete example
+
+The following example configures PB5 as a push-pull output (LED) and PC13 as an interrupt-driven input (user button on Nucleo-H743ZI), then toggles the LED and handles the button press in a callback.
+
+<Steps>
+  <Step title="Enable port clocks">
+    ```c
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+    ```
+  </Step>
+
+  <Step title="Configure the LED output pin">
+    ```c
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin   = GPIO_PIN_0;          /* LD1 on Nucleo-H743ZI */
+    GPIO_InitStruct.Mode  = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull  = GPIO_NOPULL;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+    ```
+  </Step>
+
+  <Step title="Configure the button input pin with EXTI interrupt">
+    ```c
+    GPIO_InitStruct.Pin  = GPIO_PIN_13;          /* User button on PC13 */
+    GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+    GPIO_InitStruct.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+    HAL_NVIC_SetPriority(EXTI15_10_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+    ```
+  </Step>
+
+  <Step title="Route the IRQ to the HAL handler">
+    ```c
+    /* stm32h7xx_it.c */
+    void EXTI15_10_IRQHandler(void)
+    {
+        HAL_GPIO_EXTI_IRQHandler(GPIO_PIN_13);
+    }
+    ```
+  </Step>
+
+  <Step title="Implement the EXTI callback and main loop">
+    ```c
+    /* Toggle LED on button press */
+    void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+    {
+        if (GPIO_Pin == GPIO_PIN_13)
+        {
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+        }
+    }
+
+    int main(void)
+    {
+        HAL_Init();
+        SystemClock_Config();
+        /* ... GPIO init from steps above ... */
+
+        /* Read and conditionally write a pin */
+        GPIO_PinState state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+        if (state == GPIO_PIN_RESET)
+        {
+            HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET);
+        }
+
+        while (1)
+        {
+            HAL_Delay(500);
+        }
+    }
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  When multiple pins on the same port share the same configuration, pass a combined bitmask to a single `HAL_GPIO_Init` call instead of calling it separately for each pin. This saves code space and executes faster.
+</Tip>

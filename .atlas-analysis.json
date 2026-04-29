@@ -1,28 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "STM32CubeH7",
+  "projectType": "sdk-library",
+  "projectName": "STM32CubeH7",
+  "projectDescription": "A complete MCU firmware package for the STM32H7 series, providing HAL/LL drivers, CMSIS core, BSP, and middleware libraries to accelerate embedded application development.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#3bb2e2",
-    "light": "#0d2444",
-    "dark": "#7c949f"
-  },
-  "favicon": "https://media.brand.dev/adb7935a-a282-4976-b0d5-e92c96076587.png",
-  "logo": {
-    "light": "https://media.brand.dev/00d914a0-eb5b-4c92-88eb-9bcfb8a55fb1.png",
-    "dark": "https://media.brand.dev/372277a7-168e-4476-887e-df20c0ecdd5b.png"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/STMicroelectronics/STM32CubeH7"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/STMicroelectronics/STM32CubeH7"
-    }
-  },
+  "primaryColor": "#3bb2e2",
+  "lightColor": "#0d2444",
+  "darkColor": "#7c949f",
   "navigation": {
     "tabs": [
       {
@@ -114,5 +97,28 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "STM32H7 HAL and LL peripheral drivers for all major peripherals (GPIO, UART, SPI, I2C, ADC, DAC, TIM, DMA, etc.)",
+    "CMSIS Core and Device support for Arm Cortex-M7 and dual-core Cortex-M7/M4 variants",
+    "Board Support Package (BSP) for all official ST Nucleo, Evaluation, and Discovery kits",
+    "Integrated middleware: FreeRTOS, LwIP TCP/IP stack, FatFs file system, USB Host/Device, mbedTLS, OpenAMP",
+    "Ready-to-build example projects, application templates, and demonstration firmware for each supported board",
+    "Dual-core (Cortex-M7 + Cortex-M4) project support with inter-processor communication via OpenAMP and HSEM",
+    "Extended memory execution support (ExtMem_CodeExecution) for external Flash/RAM"
+  ],
+  "publicApiSurface": [
+    "HAL_GPIO_Init / HAL_GPIO_WritePin / HAL_GPIO_ReadPin",
+    "HAL_UART_Init / HAL_UART_Transmit / HAL_UART_Receive",
+    "HAL_SPI_Init / HAL_SPI_Transmit / HAL_SPI_Receive",
+    "HAL_I2C_Init / HAL_I2C_Master_Transmit / HAL_I2C_Master_Receive",
+    "HAL_ADC_Init / HAL_ADC_Start / HAL_ADC_GetValue",
+    "HAL_TIM_Base_Init / HAL_TIM_PWM_Init / HAL_TIM_IC_Init",
+    "HAL_DMA_Init / HAL_DMA_Start / HAL_DMA_IRQHandler",
+    "HAL_RCC_OscConfig / HAL_RCC_ClockConfig / HAL_RCC_GetSysClockFreq",
+    "HAL_FLASH_Program / HAL_FLASH_Erase / HAL_FLASH_Lock",
+    "LL_GPIO_SetOutputPin / LL_USART_TransmitData8 / LL_SPI_TransmitData8",
+    "BSP_LED_Init / BSP_LED_Toggle / BSP_PushButton_Init",
+    "BSP_LCD_Init / BSP_LCD_DrawPixel / BSP_LCD_DisplayStringAt"
+  ]
 }

@@ -1,0 +1,247 @@
+---
+title: "HAL TIM driver — timers, PWM output, and input capture"
+description: "Use STM32H7 TIM1–TIM17 for time-base generation, multi-channel PWM output, and input capture frequency measurement with the HAL TIM driver."
+---
+
+The STM32H7 includes 17 timer instances spanning three categories: advanced-control timers (TIM1, TIM8) with complementary outputs and dead-time insertion; general-purpose timers (TIM2–TIM5, TIM12–TIM17) covering 16-bit or 32-bit counting and multiple capture/compare channels; and basic timers (TIM6, TIM7) used primarily as DAC triggers or simple time bases. All timers share a common HAL API surface — the same `TIM_HandleTypeDef` and init structures apply regardless of instance.
+
+<Note>
+  TIM2 and TIM5 are 32-bit counters. All other general-purpose and advanced timers are 16-bit. The advanced timers TIM1 and TIM8 support complementary channel outputs (TIMx_CHxN) and are required for three-phase motor control.
+</Note>
+
+## TIM_Base_InitTypeDef
+
+Populate `TIM_HandleTypeDef.Init` before calling any `HAL_TIM_*_Init` function.
+
+<ParamField path="Init.Prescaler" type="uint32_t" required>
+  Divides the timer input clock before the counter. The counter clock frequency is `TimerClock / (Prescaler + 1)`. On STM32H7 running at 400 MHz with APB1 at 100 MHz, the timer clock is 200 MHz (×2 because APB prescaler > 1).
+</ParamField>
+
+<ParamField path="Init.CounterMode" type="uint32_t" default="TIM_COUNTERMODE_UP">
+  Counting direction: `TIM_COUNTERMODE_UP`, `TIM_COUNTERMODE_DOWN`, or center-aligned modes `TIM_COUNTERMODE_CENTERALIGNED1/2/3`. Center-aligned modes generate symmetric PWM waveforms used in motor control.
+</ParamField>
+
+<ParamField path="Init.Period" type="uint32_t" required>
+  Auto-reload register (ARR) value. The counter wraps after reaching this value. The timer overflow frequency is `CounterClock / (Period + 1)`. Maximum value is 65535 for 16-bit timers and 4294967295 for TIM2/TIM5.
+</ParamField>
+
+<ParamField path="Init.ClockDivision" type="uint32_t" default="TIM_CLOCKDIVISION_DIV1">
+  Clock division ratio used only by the digital filter on TI1 and TI2 inputs, and for dead-time generation. `TIM_CLOCKDIVISION_DIV1`, `DIV2`, or `DIV4`. Does not affect the counter clock.
+</ParamField>
+
+<ParamField path="Init.RepetitionCounter" type="uint32_t" default="0">
+  Available on TIM1, TIM8, TIM15–TIM17. The update event (and any associated DMA request or interrupt) fires only after `RepetitionCounter + 1` counter overflows. Set to 0 for an update event on every overflow.
+</ParamField>
+
+<ParamField path="Init.AutoReloadPreload" type="uint32_t" default="TIM_AUTORELOAD_PRELOAD_DISABLE">
+  When `TIM_AUTORELOAD_PRELOAD_ENABLE`, changes to the period written via `__HAL_TIM_SET_AUTORELOAD` take effect only at the next update event. This prevents glitches when dynamically changing PWM frequency.
+</ParamField>
+
+## TIM_OC_InitTypeDef
+
+Used with `HAL_TIM_OC_ConfigChannel` and `HAL_TIM_PWM_ConfigChannel` to set up output compare and PWM channels.
+
+<ParamField path="OCMode" type="uint32_t" required>
+  Output compare mode. `TIM_OCMODE_PWM1` keeps the output active while the counter is below `Pulse`, then inactive. `TIM_OCMODE_PWM2` inverts this. `TIM_OCMODE_TOGGLE` toggles the output on each CCR match. `TIM_OCMODE_TIMING` produces no output but fires the CCR interrupt/DMA.
+</ParamField>
+
+<ParamField path="Pulse" type="uint32_t" required>
+  Capture/compare register (CCR) value. For PWM, the duty cycle is `Pulse / (Period + 1)`. Must be less than or equal to `Period`.
+</ParamField>
+
+<ParamField path="OCPolarity" type="uint32_t" default="TIM_OCPOLARITY_HIGH">
+  Active level of the output: `TIM_OCPOLARITY_HIGH` (active high) or `TIM_OCPOLARITY_LOW` (active low, inverts the waveform).
+</ParamField>
+
+<ParamField path="OCFastMode" type="uint32_t" default="TIM_OCFAST_DISABLE">
+  Fast output compare mode. When `TIM_OCFAST_ENABLE`, the output reacts to a trigger input immediately, one clock cycle sooner. Used with one-pulse mode.
+</ParamField>
+
+## Timer operating modes
+
+<Tabs>
+  <Tab title="Base timer">
+    A basic time base generates a periodic interrupt or DMA request at a fixed frequency.
+
+    ```c main.c
+    TIM_HandleTypeDef htim3;
+
+    /*
+     * Target: 1 Hz overflow on TIM3
+     * TIM3CLK = 2 * PCLK1 = 2 * 100 MHz = 200 MHz
+     * Prescaler to 10 kHz counter: (200000000 / 10000) - 1 = 19999
+     * Period for 1 Hz: 10000 - 1 = 9999
+     */
+    uint32_t prescaler = (uint32_t)(SystemCoreClock / (2 * 10000)) - 1;
+
+    htim3.Instance               = TIM3;
+    htim3.Init.Prescaler         = prescaler;
+    htim3.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim3.Init.Period            = 10000 - 1;
+    htim3.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
+    htim3.Init.RepetitionCounter = 0;
+    htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+
+    if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Start with update interrupt */
+    if (HAL_TIM_Base_Start_IT(&htim3) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Period elapsed callback — fires at 1 Hz */
+    void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+    {
+        if (htim->Instance == TIM3)
+        {
+            HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_0);
+        }
+    }
+    ```
+  </Tab>
+  <Tab title="PWM output">
+    PWM mode generates a periodic signal with a configurable duty cycle on one or more channels.
+
+    ```c main.c
+    TIM_HandleTypeDef    htim1;
+    TIM_OC_InitTypeDef   sConfig = {0};
+
+    /*
+     * Target: 20 kHz PWM on TIM1 CH1 (PA8)
+     * TIM1CLK = 2 * PCLK2 = 200 MHz
+     * Prescaler to 20 MHz: (200000000 / 20000000) - 1 = 9
+     * Period for 20 kHz: (20000000 / 20000) - 1 = 999
+     */
+    uint32_t prescaler = (uint32_t)(SystemCoreClock / (2 * 20000000)) - 1;
+
+    htim1.Instance               = TIM1;
+    htim1.Init.Prescaler         = prescaler;
+    htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim1.Init.Period            = 1000 - 1;     /* ARR */
+    htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+    htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+
+    if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* 50% duty cycle on channel 1 */
+    sConfig.OCMode     = TIM_OCMODE_PWM1;
+    sConfig.Pulse      = 500;                    /* CCR1 = ARR/2 */
+    sConfig.OCPolarity = TIM_OCPOLARITY_HIGH;
+    sConfig.OCFastMode = TIM_OCFAST_DISABLE;
+
+    if (HAL_TIM_PWM_ConfigChannel(&htim1, &sConfig, TIM_CHANNEL_1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Update duty cycle at runtime without reinitializing */
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_pulse);
+    ```
+  </Tab>
+  <Tab title="Input capture">
+    Input capture measures the time between signal edges, enabling frequency and pulse-width measurement.
+
+    ```c main.c
+    TIM_HandleTypeDef  htim1;
+    TIM_IC_InitTypeDef sICConfig = {0};
+
+    /* TIM1 in input capture mode, max period 0xFFFF */
+    htim1.Instance               = TIM1;
+    htim1.Init.Prescaler         = 0;
+    htim1.Init.CounterMode       = TIM_COUNTERMODE_UP;
+    htim1.Init.Period            = 0xFFFF;
+    htim1.Init.ClockDivision     = TIM_CLOCKDIVISION_DIV1;
+    htim1.Init.RepetitionCounter = 0;
+
+    if (HAL_TIM_IC_Init(&htim1) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Capture on channel 2, rising edge */
+    sICConfig.ICPolarity  = TIM_ICPOLARITY_RISING;
+    sICConfig.ICSelection = TIM_ICSELECTION_DIRECTTI;
+    sICConfig.ICPrescaler = TIM_ICPSC_DIV1;
+    sICConfig.ICFilter    = 0;
+
+    if (HAL_TIM_IC_ConfigChannel(&htim1, &sICConfig, TIM_CHANNEL_2) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    if (HAL_TIM_IC_Start_IT(&htim1, TIM_CHANNEL_2) != HAL_OK)
+    {
+        Error_Handler();
+    }
+
+    /* Global variables for frequency measurement */
+    static uint32_t ic_val1 = 0, ic_val2 = 0;
+    static uint8_t  capture_idx = 0;
+    uint32_t frequency = 0;
+
+    void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+    {
+        if (htim->Instance == TIM1 && htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
+        {
+            if (capture_idx == 0)
+            {
+                ic_val1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+                capture_idx = 1;
+            }
+            else
+            {
+                ic_val2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+                uint32_t diff = (ic_val2 > ic_val1) ?
+                                (ic_val2 - ic_val1) :
+                                (0xFFFF - ic_val1 + ic_val2 + 1);
+                /* TimerClock / diff = frequency in Hz */
+                uint32_t timer_clk = HAL_RCC_GetPCLK2Freq() * 2;
+                frequency = timer_clk / diff;
+                capture_idx = 0;
+            }
+        }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Callback functions
+
+| Callback | Trigger condition |
+|---|---|
+| `HAL_TIM_PeriodElapsedCallback(htim)` | Counter overflow / update event (base timer and PWM modes). |
+| `HAL_TIM_PWM_PulseFinishedCallback(htim)` | DMA transfer for PWM pulse complete (DMA mode only). |
+| `HAL_TIM_IC_CaptureCallback(htim)` | Input capture event on any channel. Read the captured value with `HAL_TIM_ReadCapturedValue`. |
+| `HAL_TIM_OC_DelayElapsedCallback(htim)` | Output compare match in `TIM_OCMODE_TIMING` mode. |
+| `HAL_TIM_TriggerCallback(htim)` | Trigger event (slave mode synchronization). |
+| `HAL_TIM_ErrorCallback(htim)` | HAL error during timer operation. |
+
+## Timer instance quick reference
+
+| Timer | Bits | Channels | Advanced features |
+|---|---|---|---|
+| TIM1, TIM8 | 16 | 4 + 4N | Complementary outputs, dead-time, break input |
+| TIM2, TIM5 | 32 | 4 | Largest period range |
+| TIM3, TIM4 | 16 | 4 | General purpose |
+| TIM6, TIM7 | 16 | 0 | Basic; DAC trigger only |
+| TIM12 | 16 | 2 | General purpose |
+| TIM13, TIM14 | 16 | 1 | General purpose |
+| TIM15 | 16 | 2 + 1N | One complementary output |
+| TIM16, TIM17 | 16 | 1 + 1N | One complementary output |
+
+<Tip>
+  To change PWM duty cycle at runtime, use `__HAL_TIM_SET_COMPARE(&htim, TIM_CHANNEL_x, value)`. This writes the CCR register directly and takes effect immediately (or at the next update event when `AutoReloadPreload` is enabled).
+</Tip>

@@ -1,0 +1,335 @@
+---
+title: "Quickstart: your first STM32H7 application"
+description: "Open the NUCLEO-H743ZI template project, configure the 400 MHz clock tree, blink the onboard LEDs, and transmit data over USART6 using STM32CubeH7 HAL."
+keywords: ["STM32H7", "quickstart", "NUCLEO-H743ZI", "HAL", "LED", "UART", "SystemClock_Config", "getting started"]
+---
+
+This guide takes you from a freshly cloned repository to a running program on the NUCLEO-H743ZI board. You will open the reference template project, understand the mandatory startup sequence, drive the three onboard LEDs, and send a message over USART6 — all using the HAL API that ships with STM32CubeH7. Before starting, make sure you have completed the [installation steps](/getting-started/installation).
+
+## What you need
+
+- NUCLEO-H743ZI board (revision 1 or 2)
+- STM32CubeIDE, Keil MDK-ARM, or IAR EWARM
+- USB cable (Micro-B) for ST-LINK power and flashing
+- Optional: USB-to-serial adapter wired to PC6 (TX) and PC7 (RX) on CN7 to observe USART6 output
+
+## Open the template project
+
+The `Projects/NUCLEO-H743ZI/Templates/` directory contains a minimal, fully configured starting point for any new application. It sets up the CPU cache, MPU, and clock tree, and leaves `main()` ready for your code.
+
+<Steps>
+  <Step title="Locate the project for your toolchain">
+    The template ships project files for all three supported IDEs:
+
+    ```
+    Projects/NUCLEO-H743ZI/Templates/
+    ├── EWARM/           # IAR project files
+    ├── MDK-ARM/         # Keil project files
+    ├── STM32CubeIDE/    # STM32CubeIDE project files
+    ├── Inc/
+    │   ├── main.h
+    │   └── stm32h7xx_hal_conf.h
+    └── Src/
+        ├── main.c
+        ├── stm32h7xx_hal_msp.c
+        ├── stm32h7xx_it.c
+        └── system_stm32h7xx.c
+    ```
+
+    Open the sub-directory that matches your IDE and import or open the project file inside it.
+  </Step>
+
+  <Step title="Import the project in STM32CubeIDE">
+    In STM32CubeIDE, select **File → Import → General → Existing Projects into Workspace**. Browse to `Projects/NUCLEO-H743ZI/Templates/STM32CubeIDE/` and click **Finish**.
+
+    Two linker scripts are included. The default active script places variables in DTCM RAM (`STM32H743ZITx_FLASH_DTCMRAM.ld`). Switch to `STM32H743ZITx_FLASH_RAM_D1.ld` in the project linker settings if you need DMA-accessible SRAM.
+  </Step>
+
+  <Step title="Build the project">
+    Select **Project → Build All** (or press `Ctrl+B`). The template should compile without errors or warnings.
+  </Step>
+
+  <Step title="Flash and run">
+    Connect the board via USB and select **Run → Debug** (F11) or **Run → Run** (Ctrl+F11). STM32CubeIDE uses the embedded ST-LINK on the NUCLEO board automatically.
+
+    <Note>
+    The NUCLEO-H743ZI uses an 8 MHz external oscillator in bypass mode on the ST-LINK header. The `SystemClock_Config()` function already accounts for this with `RCC_HSE_BYPASS`.
+    </Note>
+  </Step>
+</Steps>
+
+## Understand the startup sequence
+
+Every STM32CubeH7 project must call the following functions at the top of `main()`, in this order. The template in `Src/main.c` demonstrates the canonical pattern:
+
+```c
+int main(void)
+{
+  /* 1. Configure the MPU before any memory access */
+  MPU_Config();
+
+  /* 2. Enable L1 instruction and data caches */
+  CPU_CACHE_Enable();
+
+  /* 3. Reset peripherals, init Flash interface, start SysTick at 1 ms */
+  HAL_Init();
+
+  /* 4. Configure the system clock to 400 MHz */
+  SystemClock_Config();
+
+  /* Your application code goes here */
+}
+```
+
+<Warning>
+`MPU_Config()` and `CPU_CACHE_Enable()` must be called **before** `HAL_Init()`. Enabling the D-Cache after peripheral registers have been accessed can cause coherency issues on AXI bus masters such as DMA.
+</Warning>
+
+### Cache enable
+
+`CPU_CACHE_Enable()` turns on the Cortex-M7 L1 instruction and data caches. Both are off by default at reset:
+
+```c
+static void CPU_CACHE_Enable(void)
+{
+  /* Enable I-Cache */
+  SCB_EnableICache();
+
+  /* Enable D-Cache */
+  SCB_EnableDCache();
+}
+```
+
+## Configure the clock to 400 MHz
+
+The template's `SystemClock_Config()` drives the CPU at 400 MHz using the onboard 8 MHz HSE oscillator in bypass mode through PLL1. The AHB buses run at 200 MHz and all APB buses at 100 MHz:
+
+```c
+static void SystemClock_Config(void)
+{
+  RCC_ClkInitTypeDef RCC_ClkInitStruct;
+  RCC_OscInitTypeDef RCC_OscInitStruct;
+  HAL_StatusTypeDef ret = HAL_OK;
+
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
+  while(!__HAL_PWR_GET_FLAG(PWR_FLAG_VOSRDY)) {}
+
+  /* HSE bypass + PLL1 at 400 MHz */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState       = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.HSIState       = RCC_HSI_OFF;
+  RCC_OscInitStruct.CSIState       = RCC_CSI_OFF;
+  RCC_OscInitStruct.PLL.PLLState   = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource  = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM       = 4;
+  RCC_OscInitStruct.PLL.PLLN       = 400;
+  RCC_OscInitStruct.PLL.PLLFRACN   = 0;
+  RCC_OscInitStruct.PLL.PLLP       = 2;
+  RCC_OscInitStruct.PLL.PLLR       = 2;
+  RCC_OscInitStruct.PLL.PLLQ       = 4;
+  RCC_OscInitStruct.PLL.PLLVCOSEL  = RCC_PLL1VCOWIDE;
+  RCC_OscInitStruct.PLL.PLLRGE     = RCC_PLL1VCIRANGE_1;
+  ret = HAL_RCC_OscConfig(&RCC_OscInitStruct);
+  if(ret != HAL_OK) { Error_Handler(); }
+
+  /* PLL as system clock, AHB /2, all APB /2 */
+  RCC_ClkInitStruct.ClockType      = RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_HCLK |
+                                     RCC_CLOCKTYPE_D1PCLK1 | RCC_CLOCKTYPE_PCLK1 |
+                                     RCC_CLOCKTYPE_PCLK2  | RCC_CLOCKTYPE_D3PCLK1;
+  RCC_ClkInitStruct.SYSCLKSource   = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.SYSCLKDivider  = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.AHBCLKDivider  = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB3CLKDivider = RCC_APB3_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_APB1_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_APB2_DIV2;
+  RCC_ClkInitStruct.APB4CLKDivider = RCC_APB4_DIV2;
+  ret = HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4);
+  if(ret != HAL_OK) { Error_Handler(); }
+}
+```
+
+The resulting clock tree for the NUCLEO-H743ZI:
+
+| Domain | Frequency |
+|---|---|
+| CPU (SYSCLK) | 400 MHz |
+| AXI / AHB3 (D1), AHB1/2 (D2), AHB4 (D3) | 200 MHz |
+| APB1, APB2, APB3, APB4 | 100 MHz |
+| Flash latency | 4 wait states |
+
+## Blink the onboard LEDs
+
+The NUCLEO-H743ZI has three user LEDs (LED1 green, LED2 yellow, LED3 red). The template uses the BSP layer to initialize and drive them. Replace the `/* Add your application code here */` comment in `main()` with:
+
+```c
+/* Initialize LED1, LED2, LED3 */
+BSP_LED_Init(LED1);
+BSP_LED_Init(LED2);
+BSP_LED_Init(LED3);
+
+/* Cycle through all three LEDs in a loop */
+while (1)
+{
+  BSP_LED_Off(LED3);
+  BSP_LED_On(LED1);
+  HAL_Delay(100);
+
+  BSP_LED_Off(LED1);
+  BSP_LED_On(LED2);
+  HAL_Delay(100);
+
+  BSP_LED_Off(LED2);
+  BSP_LED_On(LED3);
+  HAL_Delay(100);
+}
+```
+
+This is taken verbatim from the template's `main()` loop in `Projects/NUCLEO-H743ZI/Templates/Src/main.c`.
+
+<Tip>
+`BSP_LED_Toggle(LED1)` is a convenient alternative to the on/off pair if you want a simple blink without cycling across multiple LEDs.
+</Tip>
+
+## Transmit over USART6
+
+USART6 is available on CN7 (PC6 = TX, PC7 = RX). The polling example in `Projects/NUCLEO-H743ZI/Examples/UART/UART_TwoBoards_ComPolling/` demonstrates the full HAL UART setup. The core configuration is:
+
+<Steps>
+  <Step title="Declare the UART handle and TX buffer">
+    ```c
+    UART_HandleTypeDef UartHandle;
+
+    uint8_t aTxBuffer[] = "Hello from STM32H743\r\n";
+    ```
+  </Step>
+
+  <Step title="Configure and initialize USART6">
+    ```c
+    UartHandle.Instance                    = USART6;
+    UartHandle.Init.BaudRate               = 115200;
+    UartHandle.Init.WordLength             = UART_WORDLENGTH_8B;
+    UartHandle.Init.StopBits               = UART_STOPBITS_1;
+    UartHandle.Init.Parity                 = UART_PARITY_NONE;
+    UartHandle.Init.HwFlowCtl              = UART_HWCONTROL_NONE;
+    UartHandle.Init.Mode                   = UART_MODE_TX_RX;
+    UartHandle.Init.OverSampling           = UART_OVERSAMPLING_16;
+    UartHandle.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+
+    if (HAL_UART_DeInit(&UartHandle) != HAL_OK) { Error_Handler(); }
+    if (HAL_UART_Init(&UartHandle)   != HAL_OK) { Error_Handler(); }
+    ```
+
+    The MSP callback `HAL_UART_MspInit()` in `stm32h7xx_hal_msp.c` must enable the USART6 clock and configure PC6/PC7 to alternate function AF7:
+
+    ```c
+    __HAL_RCC_USART6_CLK_ENABLE();
+    __HAL_RCC_GPIOC_CLK_ENABLE();
+
+    /* PC6 = USART6_TX, PC7 = USART6_RX */
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+    GPIO_InitStruct.Pin       = GPIO_PIN_6 | GPIO_PIN_7;
+    GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+    GPIO_InitStruct.Pull      = GPIO_PULLUP;
+    GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF7_USART6;
+    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+    ```
+  </Step>
+
+  <Step title="Transmit in polling mode">
+    Call `HAL_UART_Transmit()` with the buffer, its size, and a timeout in milliseconds:
+
+    ```c
+    if (HAL_UART_Transmit(&UartHandle,
+                          (uint8_t *)aTxBuffer,
+                          sizeof(aTxBuffer) - 1,
+                          5000) != HAL_OK)
+    {
+      Error_Handler();
+    }
+    ```
+
+    A 5000 ms timeout is generous for polling mode. For production code, calculate the expected transfer time from the baud rate and buffer length.
+  </Step>
+</Steps>
+
+<Note>
+`HAL_UART_Transmit()` is a blocking call. For concurrent peripheral use, prefer the interrupt-driven (`HAL_UART_Transmit_IT`) or DMA-driven (`HAL_UART_Transmit_DMA`) variants available in the `UART_TwoBoards_ComIT` and `UART_TwoBoards_ComDMA` examples respectively.
+</Note>
+
+## Complete minimal main.c
+
+The snippet below combines the startup sequence, LED cycling, and USART6 transmission into a single compilable `main.c` skeleton derived from the template and UART example:
+
+```c
+#include "main.h"
+
+UART_HandleTypeDef UartHandle;
+uint8_t aTxBuffer[] = "Hello from STM32H743\r\n";
+
+static void MPU_Config(void);
+static void CPU_CACHE_Enable(void);
+static void SystemClock_Config(void);
+static void Error_Handler(void);
+
+int main(void)
+{
+  MPU_Config();
+  CPU_CACHE_Enable();
+  HAL_Init();
+  SystemClock_Config();
+
+  BSP_LED_Init(LED1);
+  BSP_LED_Init(LED2);
+  BSP_LED_Init(LED3);
+
+  UartHandle.Instance                    = USART6;
+  UartHandle.Init.BaudRate               = 115200;
+  UartHandle.Init.WordLength             = UART_WORDLENGTH_8B;
+  UartHandle.Init.StopBits               = UART_STOPBITS_1;
+  UartHandle.Init.Parity                 = UART_PARITY_NONE;
+  UartHandle.Init.HwFlowCtl              = UART_HWCONTROL_NONE;
+  UartHandle.Init.Mode                   = UART_MODE_TX_RX;
+  UartHandle.Init.OverSampling           = UART_OVERSAMPLING_16;
+  UartHandle.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+
+  if (HAL_UART_DeInit(&UartHandle) != HAL_OK) { Error_Handler(); }
+  if (HAL_UART_Init(&UartHandle)   != HAL_OK) { Error_Handler(); }
+
+  HAL_UART_Transmit(&UartHandle,
+                    (uint8_t *)aTxBuffer,
+                    sizeof(aTxBuffer) - 1,
+                    5000);
+
+  while (1)
+  {
+    BSP_LED_Off(LED3);
+    BSP_LED_On(LED1);
+    HAL_Delay(100);
+
+    BSP_LED_Off(LED1);
+    BSP_LED_On(LED2);
+    HAL_Delay(100);
+
+    BSP_LED_Off(LED2);
+    BSP_LED_On(LED3);
+    HAL_Delay(100);
+  }
+}
+
+static void Error_Handler(void)
+{
+  while (1) {}
+}
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="GPIO EXTI interrupt" icon="bolt" href="/api/gpio">
+    See `Projects/NUCLEO-H743ZI/Examples/GPIO/GPIO_EXTI/` for a complete example wiring the user button on PC13 to an EXTI interrupt that changes the active LED and blink speed at runtime.
+  </Card>
+  <Card title="UART with DMA" icon="arrow-right-arrow-left" href="/api/uart">
+    See `Projects/NUCLEO-H743ZI/Examples/UART/UART_TwoBoards_ComDMA/` for non-blocking transmit and receive using BDMA, including cache coherency handling for DMA-accessible buffers.
+  </Card>
+</CardGroup>
